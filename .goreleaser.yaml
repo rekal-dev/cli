@@ -1,0 +1,53 @@
+# See https://goreleaser.com and ref-projects/cli/.goreleaser.yaml
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/rekal
+    binary: rekal
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/rekal-dev/cli/cmd/rekal/cli.Version={{.Version}}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "rekal_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Homebrew tap: create repo rekal-dev/homebrew-tap and add TAP_GITHUB_TOKEN (or GitHub App secrets).
+homebrew_casks:
+  - name: rekal
+    repository:
+      owner: rekal-dev
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/rekal-dev/cli"
+    description: "Rekal — gives your agent precise memory"
+    binaries:
+      - rekal

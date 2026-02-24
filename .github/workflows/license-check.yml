@@ -1,0 +1,22 @@
+name: License Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  check-license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify LICENSE exists
+        run: |
+          test -f LICENSE || (echo "LICENSE file missing"; exit 1)
+
+      - name: Verify LICENSE is Apache-2.0
+        run: |
+          head -5 LICENSE | grep -q "Apache License" || (echo "LICENSE should be Apache-2.0"; exit 1)

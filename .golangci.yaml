@@ -1,0 +1,15 @@
+# Align with ref-projects/cli; start minimal, add linters as we grow.
+version: "2"
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
+run:
+  timeout: 5m

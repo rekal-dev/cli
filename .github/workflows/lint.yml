@@ -1,0 +1,33 @@
+name: Lint
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: jdx/mise-action@v3
+
+      - name: Run linters
+        run: mise run lint
+
+      - name: Run golangci-lint (inline feedback)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.0.0

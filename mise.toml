@@ -1,0 +1,39 @@
+# Align Go version with go.mod
+[tools]
+go = { version = '1.22' }
+golangci-lint = 'v2.0.0'
+
+[tasks.fmt]
+description = "Run gofmt"
+run = "gofmt -s -w ."
+
+[tasks.test]
+description = "Run tests"
+run = "go test ./..."
+
+[tasks."test:ci"]
+description = "Run all tests with race detection"
+run = "go test -race ./..."
+
+[tasks.lint]
+description = "Run linters (gofmt check + golangci-lint)"
+run = """
+unformatted=$(gofmt -l -s .)
+if [ -n "$unformatted" ]; then
+  echo "These files need formatting. Run: mise run fmt"
+  echo "$unformatted"
+  exit 1
+fi
+golangci-lint run --timeout=5m ./...
+"""
+
+[tasks.build]
+description = "Build the CLI"
+run = """
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+go build -ldflags "-X github.com/rekal-dev/cli/cmd/rekal/cli.Version=${VERSION}" -o rekal ./cmd/rekal
+"""
+
+[tasks."build:all"]
+description = "Build for all platforms (snapshot)"
+run = "goreleaser build --snapshot --clean"
