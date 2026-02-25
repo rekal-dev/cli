@@ -34,6 +34,12 @@ Each `rekal push` creates a new commit on the Rekal orphan branch (e.g. `rekal/<
 
 ---
 
-## No flags
+## Flags
 
-No user-facing flags. Same behaviour when invoked by the hook or manually.
+| Flag | Description |
+|------|-------------|
+| `--force`, `-f` | Force push, overwriting the remote branch with local data. Use when the remote has diverged (e.g. same user pushed from two machines). |
+
+When a normal push is rejected due to non-fast-forward (remote has diverged), `rekal push` prints a warning and suggests running `rekal push --force` after review. The force push is safe because each user owns their branch and the local DuckDB is the source of truth — the wire format is rebuilt from it at each checkpoint.
+
+When invoked by the pre-push hook, `--force` is not passed — conflicts are reported silently and resolved on the next manual push.

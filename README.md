@@ -88,7 +88,7 @@ When a newer release is available, the CLI prints an update notice after each co
 | `rekal clean` | Remove Rekal setup from this repository (local only) | Implemented |
 | `rekal version` | Print the CLI version | Implemented |
 | `rekal checkpoint` | Capture the current session after a commit | Implemented |
-| `rekal push` | Push Rekal data to the remote branch | Stub |
+| `rekal push` | Push Rekal data to the remote branch | Implemented |
 | `rekal sync [--self]` | Sync team context from remote rekal branches | Stub |
 | `rekal index` | Rebuild the index DB from the data DB | Stub |
 | `rekal log [--limit N]` | Show recent checkpoints | Stub |

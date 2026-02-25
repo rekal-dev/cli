@@ -261,7 +261,7 @@ func TestStubCommands_RequireInit(t *testing.T) {
 }
 
 func TestStubCommands_NotYetImplemented(t *testing.T) {
-	commands := []string{"push", "index", "log", "sync"}
+	commands := []string{"index", "log", "sync"}
 
 	for _, name := range commands {
 		name := name

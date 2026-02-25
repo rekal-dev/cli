@@ -292,6 +292,224 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 		len(body1), len(body2), len(body2)-len(body1), len(dict1), len(dict2))
 }
 
+func TestPush_E2E_PushToBareRemote(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	// Create initial commit so HEAD exists.
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "initial")
+
+	// Place a session file and run checkpoint to populate the orphan branch.
+	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
+	defer cleanup()
+
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "fix auth bug")
+
+	_, _, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	// Create a bare remote and add it as origin.
+	bareDir := t.TempDir()
+	bareDir, _ = filepath.EvalSymlinks(bareDir)
+	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
+		t.Fatalf("git remote add: %v", err)
+	}
+
+	// Run push.
+	_, stderr, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push: %v (stderr: %s)", err, stderr)
+	}
+
+	branch := "rekal/test@rekal.dev"
+	if !strings.Contains(stderr, "pushed to origin/"+branch) {
+		t.Errorf("expected push success message, got: %q", stderr)
+	}
+
+	// Verify the branch exists on the bare remote.
+	out, err := exec.Command("git", "-C", bareDir, "rev-parse", "--verify", branch).Output()
+	if err != nil {
+		t.Fatalf("branch %s should exist on remote: %v", branch, err)
+	}
+	remoteSHA := strings.TrimSpace(string(out))
+
+	localOut, _ := exec.Command("git", "-C", env.RepoDir, "rev-parse", branch).Output()
+	localSHA := strings.TrimSpace(string(localOut))
+
+	if remoteSHA != localSHA {
+		t.Errorf("remote SHA %s != local SHA %s", remoteSHA, localSHA)
+	}
+
+	// Push again — should be a no-op (already up to date).
+	_, stderr2, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push (noop): %v", err)
+	}
+	if strings.Contains(stderr2, "pushed to origin/") {
+		t.Errorf("second push should be no-op, got: %q", stderr2)
+	}
+
+	// Verify wire format files exist on the remote branch.
+	bodyRemote := gitShow(bareDir, branch, "rekal.body")
+	dictRemote := gitShow(bareDir, branch, "dict.bin")
+	if bodyRemote == nil {
+		t.Error("rekal.body should exist on remote branch")
+	}
+	if dictRemote == nil {
+		t.Error("dict.bin should exist on remote branch")
+	}
+}
+
+func TestPush_E2E_ForceOnConflict(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	// Create initial commit so HEAD exists.
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "initial")
+
+	// First checkpoint.
+	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
+	defer cleanup()
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "fix auth")
+
+	_, _, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	// Create bare remote and push.
+	bareDir := t.TempDir()
+	bareDir, _ = filepath.EvalSymlinks(bareDir)
+	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
+		t.Fatalf("git remote add: %v", err)
+	}
+
+	_, _, err = env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("initial push: %v", err)
+	}
+
+	branch := "rekal/test@rekal.dev"
+
+	// Simulate divergence: create a different commit on the remote branch.
+	// Clone the bare, make a change, push it back.
+	cloneDir := t.TempDir()
+	cloneDir, _ = filepath.EvalSymlinks(cloneDir)
+	if err := exec.Command("git", "clone", bareDir, cloneDir).Run(); err != nil {
+		t.Fatalf("git clone: %v", err)
+	}
+	for _, kv := range [][2]string{
+		{"user.email", "other@rekal.dev"},
+		{"user.name", "Other User"},
+	} {
+		exec.Command("git", "-C", cloneDir, "config", kv[0], kv[1]).Run()
+	}
+	// Fetch the rekal branch, check it out, amend, force push.
+	exec.Command("git", "-C", cloneDir, "fetch", "origin", branch).Run()
+	exec.Command("git", "-C", cloneDir, "checkout", "-b", branch, "origin/"+branch).Run()
+	// Create a divergent commit by amending.
+	exec.Command("git", "-C", cloneDir, "commit", "--allow-empty", "--amend", "-m", "divergent").Run()
+	exec.Command("git", "-C", cloneDir, "push", "--force", "origin", branch).Run()
+
+	// Now local has diverged from remote. Do a second checkpoint to ensure local advances.
+	cleanup2 := writeSessionFile(t, env.RepoDir, "session2.jsonl", testSessionJSONL2)
+	defer cleanup2()
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { log.Println(\"ok\"); return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "add logging")
+
+	_, _, err = env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint 2: %v", err)
+	}
+
+	// Normal push should warn about conflict.
+	_, stderr, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push (conflict): %v", err)
+	}
+	if !strings.Contains(stderr, "non-fast-forward") && !strings.Contains(stderr, "rejected") {
+		// The conflict warning may or may not appear depending on git version;
+		// at minimum it should NOT say "pushed to origin/".
+		if strings.Contains(stderr, "pushed to origin/") {
+			t.Errorf("conflicting push should not succeed without --force, got: %q", stderr)
+		}
+	}
+
+	// Force push should succeed.
+	_, stderrForce, err := env.RunCLI("push", "--force")
+	if err != nil {
+		t.Fatalf("push --force: %v", err)
+	}
+	if !strings.Contains(stderrForce, "force pushed to origin/"+branch) {
+		t.Errorf("expected force push success message, got: %q", stderrForce)
+	}
+
+	// Verify local and remote match after force push.
+	localOut, _ := exec.Command("git", "-C", env.RepoDir, "rev-parse", branch).Output()
+	remoteOut, _ := exec.Command("git", "-C", bareDir, "rev-parse", branch).Output()
+	if strings.TrimSpace(string(localOut)) != strings.TrimSpace(string(remoteOut)) {
+		t.Error("local and remote should match after force push")
+	}
+}
+
+func TestPush_NoBranch_Silent(t *testing.T) {
+	// Push when no orphan branch exists should return silently.
+	env := NewTestEnv(t)
+
+	// Manually create .rekal dir without running full init (skip branch creation).
+	rekalDir := filepath.Join(env.RepoDir, ".rekal")
+	if err := os.MkdirAll(rekalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rekalDir, "data.db"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push (no branch): %v", err)
+	}
+	if stderr != "" {
+		t.Errorf("push with no branch should be silent, got: %q", stderr)
+	}
+}
+
+func TestPush_NoRemote_Silent(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	// No remote configured — push should return silently.
+	_, stderr, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push (no remote): %v", err)
+	}
+	if strings.Contains(stderr, "pushed to origin/") {
+		t.Errorf("push with no remote should not report success, got: %q", stderr)
+	}
+}
+
 func assertQueryContains(t *testing.T, env *TestEnv, sql, expected string) {
 	t.Helper()
 	stdout, _, err := env.RunCLI("query", sql)
