@@ -11,8 +11,10 @@ curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.
 Or with a specific version:
 
 ```bash
-REKAL_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
+REKAL_VERSION=v0.0.3 curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
 ```
+
+When a newer release is available, the CLI prints an update message after each command; run the suggested command (curl or `brew upgrade rekal`) to update.
 
 Install location: `~/.local/bin` (override with `REKAL_INSTALL_DIR`).
 
