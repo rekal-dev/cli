@@ -459,8 +459,8 @@ func TestPush_NoBranch_Silent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push (no branch): %v", err)
 	}
-	if stderr != "" {
-		t.Errorf("push with no branch should be silent, got: %q", stderr)
+	if !strings.Contains(stderr, "no data to push") {
+		t.Errorf("push with no branch should report no data, got: %q", stderr)
 	}
 }
 
@@ -472,8 +472,8 @@ func TestPush_NoRemote_Silent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push (no remote): %v", err)
 	}
-	if strings.Contains(stderr, "pushed to origin/") {
-		t.Errorf("push with no remote should not report success, got: %q", stderr)
+	if !strings.Contains(stderr, "no remote") {
+		t.Errorf("push with no remote should report it, got: %q", stderr)
 	}
 }
 
@@ -665,12 +665,15 @@ func TestPush_NoNewCheckpoints(t *testing.T) {
 		t.Fatalf("git remote add: %v", err)
 	}
 
-	// Push with no checkpoints — should still push the orphan branch (initial empty body).
+	// Push with no checkpoints — should report no new checkpoints but still push initial branch.
 	_, stderr, err := env.RunCLI("push")
 	if err != nil {
 		t.Fatalf("push (no checkpoints): %v", err)
 	}
-	// Should push the initial orphan branch.
+	if !strings.Contains(stderr, "no new checkpoints") {
+		t.Errorf("expected 'no new checkpoints' message, got: %q", stderr)
+	}
+	// Should still push the initial orphan branch.
 	if !strings.Contains(stderr, "pushed to origin/") {
 		t.Errorf("expected push of initial branch, got: %q", stderr)
 	}

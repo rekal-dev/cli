@@ -40,6 +40,13 @@ func runPush(cmd *cobra.Command, gitRoot string, force bool) error {
 
 	// Check if local branch exists — if not, nothing to push.
 	if err := exec.Command("git", "-C", gitRoot, "rev-parse", "--verify", branch).Run(); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "rekal: no data to push (run 'rekal checkpoint' first)")
+		return nil
+	}
+
+	// Check if remote is configured.
+	if err := exec.Command("git", "-C", gitRoot, "remote", "get-url", "origin").Run(); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "rekal: no remote 'origin' configured — skipping push")
 		return nil
 	}
 
@@ -52,6 +59,8 @@ func runPush(cmd *cobra.Command, gitRoot string, force bool) error {
 		if _, err := commitWireFormat(gitRoot, body, dict); err != nil {
 			return fmt.Errorf("commit to rekal branch: %w", err)
 		}
+	} else {
+		fmt.Fprintln(cmd.ErrOrStderr(), "rekal: no new checkpoints to export")
 	}
 
 	// Compare local SHA vs remote tracking SHA — skip if identical.
@@ -61,14 +70,16 @@ func runPush(cmd *cobra.Command, gitRoot string, force bool) error {
 	}
 	remoteSHA, err := exec.Command("git", "-C", gitRoot, "rev-parse", "origin/"+branch).Output()
 	if err == nil && strings.TrimSpace(string(localSHA)) == strings.TrimSpace(string(remoteSHA)) {
-		return nil // already up to date
+		fmt.Fprintln(cmd.ErrOrStderr(), "rekal: already up to date")
+		return nil
 	}
 
 	if force {
 		forceCmd := exec.Command("git", "-C", gitRoot, "push", "--no-verify", "--force", "origin", branch)
 		forceCmd.Stdin = nil
-		if err := forceCmd.Run(); err != nil {
-			return nil // network or other error — fail silently
+		if output, err := forceCmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "rekal: force push failed: %s\n", strings.TrimSpace(string(output)))
+			return nil
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "rekal: force pushed to origin/%s\n", branch)
 		return nil
@@ -84,7 +95,7 @@ func runPush(cmd *cobra.Command, gitRoot string, force bool) error {
 			fmt.Fprintln(cmd.ErrOrStderr(), "rekal: your remote branch has diverged from local — review and run 'rekal push --force' to overwrite remote with local data")
 			return nil
 		}
-		// Other errors (network, no remote) — return silently.
+		fmt.Fprintf(cmd.ErrOrStderr(), "rekal: push failed: %s\n", strings.TrimSpace(string(output)))
 		return nil
 	}
 

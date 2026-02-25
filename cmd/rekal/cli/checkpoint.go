@@ -63,6 +63,11 @@ func runCheckpoint(cmd *cobra.Command, gitRoot string) error {
 	}
 	defer dataDB.Close()
 
+	// Verify DB is healthy by running a simple query.
+	if _, err := dataDB.Exec("SELECT 1"); err != nil {
+		return fmt.Errorf("data DB is corrupt or unreadable: %w", err)
+	}
+
 	email := gitConfigValue("user.email")
 	entropy := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec
 	newID := func() string {
@@ -90,7 +95,10 @@ func runCheckpoint(cmd *cobra.Command, gitRoot string) error {
 		hash := sha256Hex(data)
 
 		// Check cached state — skip if size + hash match.
-		cachedSize, cachedHash, found, _ := db.GetCheckpointState(dataDB, f)
+		cachedSize, cachedHash, found, csErr := db.GetCheckpointState(dataDB, f)
+		if csErr != nil {
+			return fmt.Errorf("check checkpoint state: %w", csErr)
+		}
 		if found && cachedSize == info.Size() && cachedHash == hash {
 			continue
 		}
