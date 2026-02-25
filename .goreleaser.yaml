@@ -1,4 +1,6 @@
-# See https://goreleaser.com and ref-projects/cli/.goreleaser.yaml
+# GoReleaser config — used for local builds only.
+# CI releases use .github/workflows/release.yml (matrix build across OS runners).
+# DuckDB requires CGO, so cross-compilation from a single runner is not possible.
 version: 2
 
 before:
@@ -10,13 +12,12 @@ builds:
     binary: rekal
     env:
       - CGO_ENABLED=1
-    # DuckDB requires CGO; cross-compilation needs per-platform CI runners.
-    # For now, build only the CI runner's native platform (linux/amd64).
-    # macOS users: build from source with `mise run build`.
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
+      - arm64
     ldflags:
       - -s -w
       - -X github.com/rekal-dev/cli/cmd/rekal/cli.Version={{.Version}}
@@ -39,17 +40,3 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
-
-# Homebrew tap: create repo rekal-dev/homebrew-tap and add TAP_GITHUB_TOKEN (or GitHub App secrets).
-# Disabled until we support macOS builds in CI.
-# homebrew_casks:
-#   - name: rekal
-#     repository:
-#       owner: rekal-dev
-#       name: homebrew-tap
-#       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-#     directory: Casks
-#     homepage: "https://github.com/rekal-dev/cli"
-#     description: "Rekal — gives your agent precise memory"
-#     binaries:
-#       - rekal

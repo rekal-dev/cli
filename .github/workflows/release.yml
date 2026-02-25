@@ -10,7 +10,6 @@ permissions:
   contents: write
 
 jobs:
-  # Gate: don't release if tests or lint fail
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -21,9 +20,18 @@ jobs:
       - name: Lint
         run: mise run lint
 
-  release:
+  build:
     needs: validate
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,20 +39,68 @@ jobs:
 
       - uses: jdx/mise-action@v3
 
-      - name: Generate Homebrew Tap token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
-          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: homebrew-tap
+      - name: Build binary
+        env:
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          go build -ldflags "-s -w -X github.com/rekal-dev/cli/cmd/rekal/cli.Version=${VERSION}" \
+            -o rekal ./cmd/rekal
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Create archive
+        run: |
+          ARCHIVE="rekal_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar czf "${ARCHIVE}" rekal LICENSE README.md
+          shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          version: latest
-          args: release --clean
+          name: rekal_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            rekal_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+            rekal_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          cat *.sha256 > checksums.txt
+          rm -f *.sha256
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | sed -n '2p' || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --oneline "${PREV_TAG}..HEAD" --no-merges \
+              --grep="^docs:" --grep="^test:" --grep="^chore:" --invert-grep)
+          else
+            CHANGELOG=$(git log --oneline HEAD --no-merges \
+              --grep="^docs:" --grep="^test:" --grep="^chore:" --invert-grep)
+          fi
+          # Write to file to avoid delimiter issues
+          echo "$CHANGELOG" > /tmp/changelog.txt
+
+      - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAP_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --title "${{ github.ref_name }}" \
+            --notes-file /tmp/changelog.txt
