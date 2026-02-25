@@ -1,22 +1,15 @@
 # Rekal
 
-> **Status: Pre-release** — Actively working towards beta. Core scaffolding is in place; most commands are stubs being implemented milestone by milestone. Expect breaking changes.
+> **Pre-release** — Working towards beta. Core scaffolding is in place; commands are being implemented milestone by milestone. Expect breaking changes.
 
-Every meaningful software change begins with a conversation — a developer explores a problem, debates approaches, hits dead ends, and lands on a solution. Then they commit 12 lines of code. The conversation disappears. The code remains, stripped of all the reasoning that produced it.
+Rekal gives your AI agent precise memory — the exact context it needs for the file it is currently working on. It hooks into git, captures AI session context at every commit, and makes it a permanent, queryable part of your project's history.
 
-**Rekal captures that conversation and makes it a permanent, queryable part of your project's history.** It hooks into git, stores AI session context in a version-controlled database, and lets any developer — or any AI agent — retrieve the *why* behind every line of code.
-
-Rekal is not a tool for humans to browse history. **Rekal gives your AI agent precise memory — the exact context it needs for the file it is currently working on.** The agent starts every session knowing why the code looks the way it does.
-
-**What makes Rekal different:**
-
-- **Team-shared memory** — `rekal push` and `rekal sync` share session context across your entire team through git. Every developer's AI agent benefits from every other developer's prior sessions.
-- **Immutable by design** — Session snapshots are append-only. Content-hash deduplication means two developers always write to disjoint rows — merge conflicts are structurally impossible.
-- **Signal, not bulk** — A 2-10 MB session file becomes a ~10 KB payload. Only conversation turns, tool sequences, and actor metadata are stored. A full year of team context is ~200 KB on the remote.
-- **Git-native** — No external infrastructure. Rekal data lives on standard git branches, syncs through your existing remote, and uses git's object store for point-in-time recovery.
+Your agent starts every session knowing *why* the code looks the way it does.
 
 ## Table of Contents
 
+- [What Makes Rekal Different](#what-makes-rekal-different)
+- [Design Principles](#design-principles)
 - [How It Works](#how-it-works)
 - [Quick Start](#quick-start)
 - [Commands Reference](#commands-reference)
@@ -25,6 +18,28 @@ Rekal is not a tool for humans to browse history. **Rekal gives your AI agent pr
 - [Development](#development)
 - [Getting Help](#getting-help)
 - [License](#license)
+
+## What Makes Rekal Different
+
+- **Team-shared memory** — `rekal push` and `rekal sync` share session context across your entire team through git. Every developer's agent benefits from every other developer's prior sessions.
+- **Immutable, conflict-free** — Session snapshots are append-only. Content-hash deduplication means two developers always write to disjoint rows — merge conflicts are structurally impossible.
+- **Signal, not bulk** — A 2-10 MB session file becomes a ~10 KB payload. A full year of team context is ~200 KB on the remote. The wire format is a custom binary codec with zstd compression, dictionary-based string deduplication, and varint-encoded references — each push costs ~400 bytes on the wire.
+- **Git-native** — No external infrastructure. Rekal data lives on standard orphan branches, syncs through your existing remote, and uses git's object store for point-in-time recovery.
+- **DuckDB-powered** — Full-text search, vector embeddings, and file co-occurrence graphs built on DuckDB. The index is local-only and rebuilt on demand from the shared data.
+
+## Design Principles
+
+**Git is the source of truth. Rekal is the memory layer.** Rekal does not compete with git — it extends it. Every checkpoint is anchored to a commit SHA. Every Rekal branch is a standard git branch. The system works with any git remote without additional infrastructure.
+
+**Append-only is the foundation of correctness.** Rekal never updates or deletes a session row. This is not a constraint — it is the property that makes conflict-free multi-user sync mathematically guaranteed.
+
+**Store signal, not bulk.** Session files are 90%+ tool result content with no recall value. Rekal extracts only conversation turns, tool call sequences, compaction markers, and actor metadata. Everything else is discarded at extraction time.
+
+**Zero friction is a feature.** Once initialised, Rekal runs invisibly at the post-commit hook. Developers do not change their workflow. The only deliberate acts are `rekal push` and `rekal sync`.
+
+**Recall is the root command.** `rekal <query>` is the primary interface — especially for agents. No `search` subcommand. An agent calls `rekal` directly and gets structured memory back.
+
+**Human and agent turns are first-class distinct actors.** A session from a developer at a keyboard carries different epistemic weight than one from an automated pipeline. Rekal captures `actor_type` and `agent_id` at write time — because this distinction cannot be recovered after the fact.
 
 ## How It Works
 
@@ -35,7 +50,7 @@ Rekal is not a tool for humans to browse history. **Rekal gives your AI agent pr
                                      reasoning — linked to the commit
 ```
 
-When you commit, Rekal automatically snapshots your active AI session into a local database. `rekal push` shares it with your team on a per-user orphan branch — your git history stays clean.
+When you commit, Rekal automatically snapshots your active AI session into a local DuckDB database. `rekal push` shares it with your team on a per-user orphan branch — your git history stays clean.
 
 ## Requirements
 
@@ -82,8 +97,6 @@ When a newer release is available, the CLI prints an update notice after each co
 
 ### Recall Filters (root command)
 
-Recall is the primary interface — especially for agents. `rekal <query>` is the root invocation; there is no separate `search` subcommand.
-
 | Flag | Description |
 |------|-------------|
 | `--file <regex>` | Filter by file path (regex, git-root-relative) |
@@ -129,9 +142,9 @@ rekal --file src/billing/ "why discount logic"
 
 ## Architecture
 
-Rekal uses two local databases with distinct roles:
+Rekal uses two local DuckDB databases with distinct roles:
 
-- **Data DB** (`.rekal/data.db`) — Append-only shared truth. Session snapshots and checkpoint links. Pushed to git as a SQL dump via `rekal push`.
+- **Data DB** (`.rekal/data.db`) — Append-only shared truth. Session snapshots and checkpoint links. Synced to git as a compact binary wire format (~400 bytes per push).
 - **Index DB** (`.rekal/index.db`) — Local-only search intelligence. Full-text indexes, vector embeddings, file co-occurrence graphs. Never synced. Rebuild anytime with `rekal index`.
 
 The data DB can be recovered from any point in time using git:
