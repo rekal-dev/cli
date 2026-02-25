@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/cli/cmd/rekal/cli/skill"
 	"github.com/spf13/cobra"
 )
 
@@ -73,6 +74,11 @@ func newInitCmd() *cobra.Command {
 			// Create local orphan branch for checkpoint data.
 			if err := ensureOrphanBranch(gitRoot); err != nil {
 				return fmt.Errorf("create rekal branch: %w", err)
+			}
+
+			// Install Claude Code skill.
+			if err := installSkill(gitRoot); err != nil {
+				return fmt.Errorf("install skill: %w", err)
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Rekal initialized.")
@@ -204,4 +210,14 @@ func ensureOrphanBranch(gitRoot string) error {
 	commitHash := strings.TrimSpace(string(commitOut))
 
 	return exec.Command("git", "-C", gitRoot, "update-ref", "refs/heads/"+branch, commitHash).Run()
+}
+
+// installSkill writes the Rekal skill to .claude/skills/rekal/SKILL.md.
+// Always overwrites — the skill is managed by rekal and updated with each version.
+func installSkill(gitRoot string) error {
+	skillDir := filepath.Join(gitRoot, ".claude", "skills", "rekal")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skill.RekalSkill), 0o644)
 }
