@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -66,6 +67,7 @@ type toolInput struct {
 	FilePath string `json:"file_path"`
 	Path     string `json:"path"`
 	Command  string `json:"command"`
+	Content  string `json:"content"`
 }
 
 // ParseTranscript parses raw JSONL bytes into a SessionPayload.
@@ -215,6 +217,14 @@ func parseAssistantMessage(msgRaw json.RawMessage, ts time.Time) ([]Turn, []Tool
 		case "tool_use":
 			tc := extractToolCall(b)
 			toolCalls = append(toolCalls, tc)
+			// Capture plan file content as an assistant turn so it's searchable.
+			if planText := extractPlanContent(b); planText != "" {
+				turns = append(turns, Turn{
+					Role:      "assistant",
+					Content:   planText,
+					Timestamp: ts,
+				})
+			}
 			// Discard: "thinking", "tool_result", etc.
 		}
 	}
@@ -302,6 +312,33 @@ func extractToolCall(b contentBlock) ToolCall {
 	}
 
 	return tc
+}
+
+// extractPlanContent returns the file content from a Write/Edit tool_use block
+// if the target path is a .claude/plans/ file. This captures plan text as a
+// searchable assistant turn.
+func extractPlanContent(b contentBlock) string {
+	if b.Name != "Write" && b.Name != "Edit" {
+		return ""
+	}
+	if len(b.Input) == 0 {
+		return ""
+	}
+
+	var inp toolInput
+	if err := json.Unmarshal(b.Input, &inp); err != nil {
+		return ""
+	}
+
+	path := inp.FilePath
+	if path == "" {
+		path = inp.Path
+	}
+	if !strings.Contains(path, ".claude/plans/") {
+		return ""
+	}
+
+	return inp.Content
 }
 
 func truncate(s string, maxLen int) string {

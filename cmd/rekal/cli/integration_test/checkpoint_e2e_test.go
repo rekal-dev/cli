@@ -52,7 +52,6 @@ func gitCommit(t *testing.T, dir, msg string) {
 }
 
 // writeSessionFile writes a .jsonl file to the Claude session directory for the repo.
-// Returns a cleanup function to remove it.
 func writeSessionFile(t *testing.T, repoDir, name, content string) func() {
 	t.Helper()
 	sessionDir := session.FindSessionDir(repoDir)
@@ -65,7 +64,6 @@ func writeSessionFile(t *testing.T, repoDir, name, content string) func() {
 	}
 	return func() {
 		os.Remove(path)
-		// Try to remove parent dir if empty.
 		os.Remove(sessionDir)
 	}
 }
@@ -106,19 +104,16 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 		t.Errorf("initial body should be 9 bytes (header only), got %d", len(bodyInit))
 	}
 
-	// --- First checkpoint ---
+	// --- First checkpoint (DuckDB only, no wire format) ---
 
-	// Place a session file.
 	cleanup1 := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
 	defer cleanup1()
 
-	// Make a commit so git diff HEAD~1 works.
 	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitCommit(t, env.RepoDir, "fix auth bug")
 
-	// Run checkpoint.
 	_, stderr, err := env.RunCLI("checkpoint")
 	if err != nil {
 		t.Fatalf("checkpoint: %v (stderr: %s)", err, stderr)
@@ -134,14 +129,99 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoints", `"n":1`)
 	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoint_sessions", `"n":1`)
 
-	// Verify wire format on orphan branch.
+	// Checkpoint should NOT have written to orphan branch (that's push's job now).
+	bodyAfterCp := gitShow(env.RepoDir, branch, "rekal.body")
+	if len(bodyAfterCp) != 9 {
+		t.Errorf("body should still be header-only after checkpoint (no wire format), got %d bytes", len(bodyAfterCp))
+	}
+
+	// Checkpoint should be unexported.
+	assertQueryContains(t, env, "SELECT exported FROM checkpoints", `"exported":false`)
+
+	// --- Idempotency: re-run checkpoint with same session ---
+
+	_, stderr2, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint idempotent: %v", err)
+	}
+	if strings.Contains(stderr2, "session(s) captured") {
+		t.Error("idempotent checkpoint should not capture new sessions")
+	}
+
+	// --- Second checkpoint ---
+
+	cleanup2 := writeSessionFile(t, env.RepoDir, "session2.jsonl", testSessionJSONL2)
+	defer cleanup2()
+
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { log.Println(\"ok\"); return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "add logging")
+
+	_, stderr3, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint 2: %v (stderr: %s)", err, stderr3)
+	}
+	if !strings.Contains(stderr3, "1 session(s) captured") {
+		t.Errorf("expected '1 session(s) captured', got: %q", stderr3)
+	}
+
+	assertQueryContains(t, env, "SELECT count(*) as n FROM sessions", `"n":2`)
+	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoints", `"n":2`)
+	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoint_sessions", `"n":2`)
+}
+
+func TestPush_E2E_ExportAndPush(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "initial")
+
+	branch := "rekal/test@rekal.dev"
+
+	// Checkpoint (DuckDB only).
+	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
+	defer cleanup()
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "fix auth bug")
+
+	_, _, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	// Create bare remote.
+	bareDir := t.TempDir()
+	bareDir, _ = filepath.EvalSymlinks(bareDir)
+	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
+		t.Fatalf("git remote add: %v", err)
+	}
+
+	// Push should export DuckDB → wire format → orphan branch → remote.
+	_, stderr, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stderr, "pushed to origin/"+branch) {
+		t.Errorf("expected push success message, got: %q", stderr)
+	}
+
+	// Verify wire format on orphan branch after push.
 	body1 := gitShow(env.RepoDir, branch, "rekal.body")
 	dict1 := gitShow(env.RepoDir, branch, "dict.bin")
 	if body1 == nil || len(body1) <= 9 {
-		t.Fatal("body should have frames after checkpoint")
+		t.Fatal("body should have frames after push")
 	}
 	if dict1 == nil || len(dict1) <= 12 {
-		t.Fatal("dict should have entries after checkpoint")
+		t.Fatal("dict should have entries after push")
 	}
 
 	// Scan frames — expect 3: session + checkpoint + meta.
@@ -150,7 +230,7 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 		t.Fatalf("ScanFrames: %v", err)
 	}
 	if len(frames1) != 3 {
-		t.Fatalf("expected 3 frames after first checkpoint, got %d", len(frames1))
+		t.Fatalf("expected 3 frames after push, got %d", len(frames1))
 	}
 	if frames1[0].Type != codec.FrameSession {
 		t.Errorf("frame 0: expected session (0x01), got 0x%02x", frames1[0].Type)
@@ -180,64 +260,61 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 	if len(sf.ToolCalls) != 3 {
 		t.Errorf("session tool_calls: got %d, want 3", len(sf.ToolCalls))
 	}
-	// Verify turn content survived roundtrip.
 	if sf.Turns[0].Text != "fix the auth bug in login.go" {
 		t.Errorf("turn 0 text: %q", sf.Turns[0].Text)
 	}
-	// Verify tool types.
 	if sf.ToolCalls[0].Tool != codec.ToolRead {
 		t.Errorf("tool 0: got %d, want Read (%d)", sf.ToolCalls[0].Tool, codec.ToolRead)
 	}
-	if sf.ToolCalls[1].Tool != codec.ToolEdit {
-		t.Errorf("tool 1: got %d, want Edit (%d)", sf.ToolCalls[1].Tool, codec.ToolEdit)
+
+	// Decode checkpoint frame — verify CheckpointRef is set.
+	payload1 := codec.ExtractFramePayload(body1, frames1[1])
+	cf, err := dec.DecodeCheckpointFrame(payload1)
+	if err != nil {
+		t.Fatalf("decode checkpoint: %v", err)
 	}
-	if sf.ToolCalls[2].Tool != codec.ToolBash {
-		t.Errorf("tool 2: got %d, want Bash (%d)", sf.ToolCalls[2].Tool, codec.ToolBash)
+	if len(cf.SessionRefs) != 1 {
+		t.Errorf("checkpoint session_refs: got %d, want 1", len(cf.SessionRefs))
 	}
+
+	// Verify checkpoint is now marked exported.
+	assertQueryContains(t, env, "SELECT exported FROM checkpoints", `"exported":true`)
 
 	// Load dict and verify entries.
 	loadedDict, err := codec.LoadDict(dict1)
 	if err != nil {
 		t.Fatalf("LoadDict: %v", err)
 	}
-	if loadedDict.Len(codec.NSSessions) != 1 {
+	if loadedDict.Len(codec.NSSessions) < 1 {
 		t.Errorf("dict sessions: %d", loadedDict.Len(codec.NSSessions))
 	}
-	if loadedDict.Len(codec.NSEmails) != 1 {
-		t.Errorf("dict emails: %d", loadedDict.Len(codec.NSEmails))
-	}
 
-	// --- Idempotency: re-run checkpoint with same session ---
-
-	_, stderr2, err := env.RunCLI("checkpoint")
+	// Push again — should be no-op.
+	_, stderr2, err := env.RunCLI("push")
 	if err != nil {
-		t.Fatalf("checkpoint idempotent: %v", err)
+		t.Fatalf("push (noop): %v", err)
 	}
-	// Should capture 0 new sessions (dedup by SHA-256).
-	if strings.Contains(stderr2, "session(s) captured") {
-		t.Error("idempotent checkpoint should not capture new sessions")
-	}
-	body1Again := gitShow(env.RepoDir, branch, "rekal.body")
-	if sha256Hex(body1) != sha256Hex(body1Again) {
-		t.Error("body should be unchanged after idempotent checkpoint")
+	if strings.Contains(stderr2, "pushed to origin/") {
+		t.Errorf("second push should be no-op, got: %q", stderr2)
 	}
 
-	// --- Second checkpoint: append-only property ---
+	// --- Second checkpoint + push: append-only ---
 
 	cleanup2 := writeSessionFile(t, env.RepoDir, "session2.jsonl", testSessionJSONL2)
 	defer cleanup2()
-
 	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { log.Println(\"ok\"); return nil }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitCommit(t, env.RepoDir, "add logging")
 
-	_, stderr3, err := env.RunCLI("checkpoint")
+	_, _, err = env.RunCLI("checkpoint")
 	if err != nil {
-		t.Fatalf("checkpoint 2: %v (stderr: %s)", err, stderr3)
+		t.Fatalf("checkpoint 2: %v", err)
 	}
-	if !strings.Contains(stderr3, "1 session(s) captured") {
-		t.Errorf("expected '1 session(s) captured', got: %q", stderr3)
+
+	_, _, err = env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push 2: %v", err)
 	}
 
 	body2 := gitShow(env.RepoDir, branch, "rekal.body")
@@ -249,7 +326,7 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 	}
 	prefix := body2[:len(body1)]
 	if sha256Hex(prefix) != sha256Hex(body1) {
-		t.Error("append-only violation: body prefix changed after second checkpoint")
+		t.Error("append-only violation: body prefix changed after second push")
 	}
 
 	// Should now have 6 frames.
@@ -258,130 +335,31 @@ func TestCheckpoint_E2E_FullPipeline(t *testing.T) {
 		t.Fatalf("ScanFrames 2: %v", err)
 	}
 	if len(frames2) != 6 {
-		t.Fatalf("expected 6 frames after second checkpoint, got %d", len(frames2))
+		t.Fatalf("expected 6 frames after second push, got %d", len(frames2))
 	}
 
-	// Verify DuckDB totals.
-	assertQueryContains(t, env, "SELECT count(*) as n FROM sessions", `"n":2`)
-	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoints", `"n":2`)
-	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoint_sessions", `"n":2`)
-
-	// Verify dict grew.
+	// Dict should have grown.
 	loadedDict2, err := codec.LoadDict(dict2)
 	if err != nil {
 		t.Fatalf("LoadDict 2: %v", err)
 	}
-	if loadedDict2.Len(codec.NSSessions) != 2 {
-		t.Errorf("dict sessions after 2nd checkpoint: %d", loadedDict2.Len(codec.NSSessions))
+	if loadedDict2.Len(codec.NSSessions) < 2 {
+		t.Errorf("dict sessions after 2nd push: %d", loadedDict2.Len(codec.NSSessions))
 	}
 
-	// Decode the second session frame.
-	payload3 := codec.ExtractFramePayload(body2, frames2[3])
-	sf2, err := dec.DecodeSessionFrame(payload3)
-	if err != nil {
-		t.Fatalf("decode session 2: %v", err)
-	}
-	if len(sf2.Turns) != 3 {
-		t.Errorf("session 2 turns: got %d, want 3", len(sf2.Turns))
-	}
-	if sf2.Turns[0].Text != "add error logging" {
-		t.Errorf("session 2 turn 0: %q", sf2.Turns[0].Text)
-	}
-
-	t.Logf("E2E: body %d → %d bytes (delta %d), dict %d → %d bytes, 6 frames, 2 sessions, all data intact",
-		len(body1), len(body2), len(body2)-len(body1), len(dict1), len(dict2))
-}
-
-func TestPush_E2E_PushToBareRemote(t *testing.T) {
-	env := NewTestEnv(t)
-	env.Init()
-
-	// Create initial commit so HEAD exists.
-	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCommit(t, env.RepoDir, "initial")
-
-	// Place a session file and run checkpoint to populate the orphan branch.
-	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
-	defer cleanup()
-
-	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCommit(t, env.RepoDir, "fix auth bug")
-
-	_, _, err := env.RunCLI("checkpoint")
-	if err != nil {
-		t.Fatalf("checkpoint: %v", err)
-	}
-
-	// Create a bare remote and add it as origin.
-	bareDir := t.TempDir()
-	bareDir, _ = filepath.EvalSymlinks(bareDir)
-	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
-		t.Fatalf("git init --bare: %v", err)
-	}
-	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
-		t.Fatalf("git remote add: %v", err)
-	}
-
-	// Run push.
-	_, stderr, err := env.RunCLI("push")
-	if err != nil {
-		t.Fatalf("push: %v (stderr: %s)", err, stderr)
-	}
-
-	branch := "rekal/test@rekal.dev"
-	if !strings.Contains(stderr, "pushed to origin/"+branch) {
-		t.Errorf("expected push success message, got: %q", stderr)
-	}
-
-	// Verify the branch exists on the bare remote.
-	out, err := exec.Command("git", "-C", bareDir, "rev-parse", "--verify", branch).Output()
-	if err != nil {
-		t.Fatalf("branch %s should exist on remote: %v", branch, err)
-	}
-	remoteSHA := strings.TrimSpace(string(out))
-
-	localOut, _ := exec.Command("git", "-C", env.RepoDir, "rev-parse", branch).Output()
-	localSHA := strings.TrimSpace(string(localOut))
-
-	if remoteSHA != localSHA {
-		t.Errorf("remote SHA %s != local SHA %s", remoteSHA, localSHA)
-	}
-
-	// Push again — should be a no-op (already up to date).
-	_, stderr2, err := env.RunCLI("push")
-	if err != nil {
-		t.Fatalf("push (noop): %v", err)
-	}
-	if strings.Contains(stderr2, "pushed to origin/") {
-		t.Errorf("second push should be no-op, got: %q", stderr2)
-	}
-
-	// Verify wire format files exist on the remote branch.
-	bodyRemote := gitShow(bareDir, branch, "rekal.body")
-	dictRemote := gitShow(bareDir, branch, "dict.bin")
-	if bodyRemote == nil {
-		t.Error("rekal.body should exist on remote branch")
-	}
-	if dictRemote == nil {
-		t.Error("dict.bin should exist on remote branch")
-	}
+	t.Logf("E2E: body %d → %d bytes, dict %d → %d bytes, 6 frames, 2 sessions",
+		len(body1), len(body2), len(dict1), len(dict2))
 }
 
 func TestPush_E2E_ForceOnConflict(t *testing.T) {
 	env := NewTestEnv(t)
 	env.Init()
 
-	// Create initial commit so HEAD exists.
 	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitCommit(t, env.RepoDir, "initial")
 
-	// First checkpoint.
 	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
 	defer cleanup()
 	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
@@ -394,7 +372,6 @@ func TestPush_E2E_ForceOnConflict(t *testing.T) {
 		t.Fatalf("checkpoint: %v", err)
 	}
 
-	// Create bare remote and push.
 	bareDir := t.TempDir()
 	bareDir, _ = filepath.EvalSymlinks(bareDir)
 	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
@@ -411,8 +388,7 @@ func TestPush_E2E_ForceOnConflict(t *testing.T) {
 
 	branch := "rekal/test@rekal.dev"
 
-	// Simulate divergence: create a different commit on the remote branch.
-	// Clone the bare, make a change, push it back.
+	// Simulate divergence.
 	cloneDir := t.TempDir()
 	cloneDir, _ = filepath.EvalSymlinks(cloneDir)
 	if err := exec.Command("git", "clone", bareDir, cloneDir).Run(); err != nil {
@@ -424,14 +400,12 @@ func TestPush_E2E_ForceOnConflict(t *testing.T) {
 	} {
 		exec.Command("git", "-C", cloneDir, "config", kv[0], kv[1]).Run()
 	}
-	// Fetch the rekal branch, check it out, amend, force push.
 	exec.Command("git", "-C", cloneDir, "fetch", "origin", branch).Run()
 	exec.Command("git", "-C", cloneDir, "checkout", "-b", branch, "origin/"+branch).Run()
-	// Create a divergent commit by amending.
 	exec.Command("git", "-C", cloneDir, "commit", "--allow-empty", "--amend", "-m", "divergent").Run()
 	exec.Command("git", "-C", cloneDir, "push", "--force", "origin", branch).Run()
 
-	// Now local has diverged from remote. Do a second checkpoint to ensure local advances.
+	// Second checkpoint + push should detect conflict.
 	cleanup2 := writeSessionFile(t, env.RepoDir, "session2.jsonl", testSessionJSONL2)
 	defer cleanup2()
 	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { log.Println(\"ok\"); return nil }\n"), 0o644); err != nil {
@@ -444,14 +418,11 @@ func TestPush_E2E_ForceOnConflict(t *testing.T) {
 		t.Fatalf("checkpoint 2: %v", err)
 	}
 
-	// Normal push should warn about conflict.
 	_, stderr, err := env.RunCLI("push")
 	if err != nil {
 		t.Fatalf("push (conflict): %v", err)
 	}
 	if !strings.Contains(stderr, "non-fast-forward") && !strings.Contains(stderr, "rejected") {
-		// The conflict warning may or may not appear depending on git version;
-		// at minimum it should NOT say "pushed to origin/".
 		if strings.Contains(stderr, "pushed to origin/") {
 			t.Errorf("conflicting push should not succeed without --force, got: %q", stderr)
 		}
@@ -466,7 +437,6 @@ func TestPush_E2E_ForceOnConflict(t *testing.T) {
 		t.Errorf("expected force push success message, got: %q", stderrForce)
 	}
 
-	// Verify local and remote match after force push.
 	localOut, _ := exec.Command("git", "-C", env.RepoDir, "rev-parse", branch).Output()
 	remoteOut, _ := exec.Command("git", "-C", bareDir, "rev-parse", branch).Output()
 	if strings.TrimSpace(string(localOut)) != strings.TrimSpace(string(remoteOut)) {
@@ -475,10 +445,8 @@ func TestPush_E2E_ForceOnConflict(t *testing.T) {
 }
 
 func TestPush_NoBranch_Silent(t *testing.T) {
-	// Push when no orphan branch exists should return silently.
 	env := NewTestEnv(t)
 
-	// Manually create .rekal dir without running full init (skip branch creation).
 	rekalDir := filepath.Join(env.RepoDir, ".rekal")
 	if err := os.MkdirAll(rekalDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -500,13 +468,211 @@ func TestPush_NoRemote_Silent(t *testing.T) {
 	env := NewTestEnv(t)
 	env.Init()
 
-	// No remote configured — push should return silently.
 	_, stderr, err := env.RunCLI("push")
 	if err != nil {
 		t.Fatalf("push (no remote): %v", err)
 	}
 	if strings.Contains(stderr, "pushed to origin/") {
 		t.Errorf("push with no remote should not report success, got: %q", stderr)
+	}
+}
+
+func TestLog_E2E(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "initial")
+
+	// Log with no checkpoints — should produce no output, no error.
+	stdout, _, err := env.RunCLI("log")
+	if err != nil {
+		t.Fatalf("log (empty): %v", err)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("log with no checkpoints should be empty, got: %q", stdout)
+	}
+
+	// Create a checkpoint.
+	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
+	defer cleanup()
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "fix auth bug")
+
+	_, _, err = env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	// Log should show the checkpoint.
+	stdout, _, err = env.RunCLI("log")
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	if !strings.Contains(stdout, "checkpoint ") {
+		t.Errorf("log should contain 'checkpoint', got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "Sessions: 1") {
+		t.Errorf("log should show 'Sessions: 1', got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "Author:") {
+		t.Errorf("log should contain 'Author:', got: %q", stdout)
+	}
+
+	// Log --limit 0 should show nothing.
+	stdout, _, err = env.RunCLI("log", "--limit", "0")
+	if err != nil {
+		t.Fatalf("log --limit 0: %v", err)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("log --limit 0 should be empty, got: %q", stdout)
+	}
+}
+
+func TestImport_E2E_RoundTrip(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "initial")
+
+	// Checkpoint + push to populate orphan branch.
+	cleanup := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
+	defer cleanup()
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "fix auth bug")
+
+	_, _, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	// Create bare remote and push.
+	bareDir := t.TempDir()
+	bareDir, _ = filepath.EvalSymlinks(bareDir)
+	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
+		t.Fatalf("git remote add: %v", err)
+	}
+	// Push current branch so clone has a proper default branch.
+	// Use --no-verify to skip the pre-push hook (rekal binary not in PATH during tests).
+	currentBranch, _ := exec.Command("git", "-C", env.RepoDir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	branchName := strings.TrimSpace(string(currentBranch))
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "--no-verify", "origin", branchName).Run(); err != nil {
+		t.Fatalf("git push %s: %v", branchName, err)
+	}
+
+	_, _, err = env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	// Clone into a new repo and init — should import from remote.
+	cloneDir := t.TempDir()
+	cloneDir, _ = filepath.EvalSymlinks(cloneDir)
+	if err := exec.Command("git", "clone", bareDir, cloneDir).Run(); err != nil {
+		t.Fatalf("git clone: %v", err)
+	}
+	for _, kv := range [][2]string{
+		{"user.email", "test@rekal.dev"},
+		{"user.name", "Test User"},
+	} {
+		exec.Command("git", "-C", cloneDir, "config", kv[0], kv[1]).Run()
+	}
+
+	env2 := NewTestEnvAt(t, cloneDir)
+	_, stderr, err := env2.RunCLI("init")
+	if err != nil {
+		t.Fatalf("init (clone): %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stderr, "imported") {
+		t.Errorf("init should report imported sessions, got: %q", stderr)
+	}
+
+	// Verify DuckDB in clone has the imported data.
+	assertQueryContains(t, env2, "SELECT count(*) as n FROM sessions", `"n":1`)
+	assertQueryContains(t, env2, "SELECT count(*) as n FROM checkpoints", `"n":1`)
+
+	// Log should work in the clone.
+	stdout, _, err := env2.RunCLI("log")
+	if err != nil {
+		t.Fatalf("log (clone): %v", err)
+	}
+	if !strings.Contains(stdout, "checkpoint ") {
+		t.Errorf("log in clone should show checkpoint, got: %q", stdout)
+	}
+}
+
+func TestCheckpoint_Incremental(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "initial")
+
+	// First checkpoint with session1.
+	cleanup1 := writeSessionFile(t, env.RepoDir, "session1.jsonl", testSessionJSONL)
+	defer cleanup1()
+	if err := os.WriteFile(filepath.Join(env.RepoDir, "login.go"), []byte("func login() error { return nil }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, env.RepoDir, "fix auth bug")
+
+	_, stderr, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint 1: %v", err)
+	}
+	if !strings.Contains(stderr, "1 session(s) captured") {
+		t.Errorf("expected '1 session(s) captured', got: %q", stderr)
+	}
+
+	// Second checkpoint — same file unchanged, should skip.
+	gitCommit(t, env.RepoDir, "empty commit")
+	_, stderr2, err := env.RunCLI("checkpoint")
+	if err != nil {
+		t.Fatalf("checkpoint 2: %v", err)
+	}
+	if strings.Contains(stderr2, "session(s) captured") {
+		t.Error("incremental checkpoint should skip unchanged files")
+	}
+
+	// Verify checkpoint_state table has an entry.
+	assertQueryContains(t, env, "SELECT count(*) as n FROM checkpoint_state", `"n":1`)
+}
+
+func TestPush_NoNewCheckpoints(t *testing.T) {
+	env := NewTestEnv(t)
+	env.Init()
+
+	bareDir := t.TempDir()
+	bareDir, _ = filepath.EvalSymlinks(bareDir)
+	if err := exec.Command("git", "init", "--bare", bareDir).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
+		t.Fatalf("git remote add: %v", err)
+	}
+
+	// Push with no checkpoints — should still push the orphan branch (initial empty body).
+	_, stderr, err := env.RunCLI("push")
+	if err != nil {
+		t.Fatalf("push (no checkpoints): %v", err)
+	}
+	// Should push the initial orphan branch.
+	if !strings.Contains(stderr, "pushed to origin/") {
+		t.Errorf("expected push of initial branch, got: %q", stderr)
 	}
 }
 

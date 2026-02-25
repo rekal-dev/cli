@@ -85,14 +85,15 @@ type ToolCallRecord struct {
 
 // CheckpointFrame is the decoded content of a checkpoint frame (0x02).
 type CheckpointFrame struct {
-	GitSHA      string // 40-char hex
-	BranchRef   uint64
-	EmailRef    uint64
-	Timestamp   time.Time
-	ActorType   byte
-	AgentIDRef  uint64 // only valid if ActorType == ActorAgent
-	SessionRefs []uint64
-	Files       []FileTouchedRecord
+	CheckpointRef uint64 // dict ref to checkpoint ULID
+	GitSHA        string // 40-char hex
+	BranchRef     uint64
+	EmailRef      uint64
+	Timestamp     time.Time
+	ActorType     byte
+	AgentIDRef    uint64 // only valid if ActorType == ActorAgent
+	SessionRefs   []uint64
+	Files         []FileTouchedRecord
 }
 
 // FileTouchedRecord is a file changed in a checkpoint.
@@ -263,6 +264,9 @@ func encodeCheckpointPayload(cf *CheckpointFrame) []byte {
 	buf = append(buf, checkpointMagic...)
 	buf = append(buf, payloadVersion)
 	buf = append(buf, byte(len(cf.Files)))
+
+	// Checkpoint ULID dict ref (before GitSHA).
+	buf = appendUvarint(buf, cf.CheckpointRef)
 
 	// Checkpoint meta.
 	sha := []byte(cf.GitSHA)
@@ -481,13 +485,16 @@ func parseCheckpointPayload(data []byte) (*CheckpointFrame, error) {
 	pos := 6
 	cf := &CheckpointFrame{}
 
+	// Checkpoint ULID dict ref.
+	var n int
+	cf.CheckpointRef, n = readUvarint(data[pos:])
+	pos += n
+
 	if pos+40 > len(data) {
 		return nil, fmt.Errorf("checkpoint payload truncated at git_sha")
 	}
 	cf.GitSHA = string(data[pos : pos+40])
 	pos += 40
-
-	var n int
 	cf.BranchRef, n = readUvarint(data[pos:])
 	pos += n
 	cf.EmailRef, n = readUvarint(data[pos:])

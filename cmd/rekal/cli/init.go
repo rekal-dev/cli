@@ -77,6 +77,22 @@ func newInitCmd() *cobra.Command {
 				return fmt.Errorf("create rekal branch: %w", err)
 			}
 
+			// Import existing data from orphan branch into DuckDB.
+			branch := rekalBranchName()
+			bodyData := gitShowFile(gitRoot, branch, "rekal.body")
+			if len(bodyData) > 9 { // more than empty header
+				importDB, err := db.OpenData(gitRoot)
+				if err == nil {
+					n, importErr := importBranch(gitRoot, importDB, branch)
+					importDB.Close()
+					if importErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "rekal: import error: %v\n", importErr)
+					} else if n > 0 {
+						fmt.Fprintf(cmd.ErrOrStderr(), "rekal: imported %d session(s) from remote\n", n)
+					}
+				}
+			}
+
 			// Install Claude Code skill.
 			if err := installSkill(gitRoot); err != nil {
 				return fmt.Errorf("install skill: %w", err)

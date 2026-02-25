@@ -140,6 +140,60 @@ also not json`
 	}
 }
 
+func TestParseTranscript_PlanContentCaptured(t *testing.T) {
+	t.Parallel()
+
+	input := `{"uuid":"p1","sessionId":"s3","timestamp":"2025-01-15T10:00:00Z","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me write a plan."},{"type":"tool_use","name":"Write","input":{"file_path":"/home/user/.claude/plans/my-plan.md","content":"# Plan\n\n## Step 1\nDo the thing.\n\n## Step 2\nDo the other thing."}}]},"gitBranch":"main"}`
+
+	payload, err := ParseTranscript([]byte(input))
+	if err != nil {
+		t.Fatalf("ParseTranscript: %v", err)
+	}
+
+	// Expect 2 turns: the plan content (emitted during block loop) + the text block (assembled after loop).
+	if len(payload.Turns) != 2 {
+		t.Fatalf("len(Turns) = %d, want 2", len(payload.Turns))
+	}
+
+	wantPlan := "# Plan\n\n## Step 1\nDo the thing.\n\n## Step 2\nDo the other thing."
+	if payload.Turns[0].Role != "assistant" {
+		t.Errorf("Turns[0].Role = %q, want assistant", payload.Turns[0].Role)
+	}
+	if payload.Turns[0].Content != wantPlan {
+		t.Errorf("Turns[0].Content = %q, want %q", payload.Turns[0].Content, wantPlan)
+	}
+	if payload.Turns[1].Content != "Let me write a plan." {
+		t.Errorf("Turns[1].Content = %q", payload.Turns[1].Content)
+	}
+
+	// Tool call should still be captured.
+	if len(payload.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(payload.ToolCalls))
+	}
+	if payload.ToolCalls[0].Path != "/home/user/.claude/plans/my-plan.md" {
+		t.Errorf("ToolCalls[0].Path = %q", payload.ToolCalls[0].Path)
+	}
+}
+
+func TestParseTranscript_NonPlanWriteNotCaptured(t *testing.T) {
+	t.Parallel()
+
+	input := `{"uuid":"np1","sessionId":"s4","timestamp":"2025-01-15T10:00:00Z","type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"src/app.go","content":"package main"}}]},"gitBranch":"main"}`
+
+	payload, err := ParseTranscript([]byte(input))
+	if err != nil {
+		t.Fatalf("ParseTranscript: %v", err)
+	}
+
+	// Non-plan Write should NOT produce a synthetic turn.
+	if len(payload.Turns) != 0 {
+		t.Fatalf("len(Turns) = %d, want 0 (non-plan Write should not create a turn)", len(payload.Turns))
+	}
+	if len(payload.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(payload.ToolCalls))
+	}
+}
+
 func TestParseTranscript_CmdPrefixTruncation(t *testing.T) {
 	t.Parallel()
 

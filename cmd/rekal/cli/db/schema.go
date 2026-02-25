@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 	user_email      VARCHAR NOT NULL,
 	ts              TIMESTAMP NOT NULL,
 	actor_type      VARCHAR NOT NULL DEFAULT 'human',
-	agent_id        VARCHAR
+	agent_id        VARCHAR,
+	exported        BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS files_touched (
@@ -70,6 +71,12 @@ CREATE TABLE IF NOT EXISTS checkpoint_sessions (
 	checkpoint_id   VARCHAR NOT NULL REFERENCES checkpoints(id),
 	session_id      VARCHAR NOT NULL REFERENCES sessions(id),
 	PRIMARY KEY (checkpoint_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_state (
+	file_path   VARCHAR PRIMARY KEY,
+	byte_size   BIGINT NOT NULL,
+	file_hash   VARCHAR NOT NULL
 );
 `
 

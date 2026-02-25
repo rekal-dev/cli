@@ -43,6 +43,17 @@ func runPush(cmd *cobra.Command, gitRoot string, force bool) error {
 		return nil
 	}
 
+	// Export unexported checkpoints from DuckDB → wire format → orphan branch.
+	body, dict, err := exportNewFrames(gitRoot)
+	if err != nil {
+		return fmt.Errorf("export: %w", err)
+	}
+	if body != nil {
+		if _, err := commitWireFormat(gitRoot, body, dict); err != nil {
+			return fmt.Errorf("commit to rekal branch: %w", err)
+		}
+	}
+
 	// Compare local SHA vs remote tracking SHA — skip if identical.
 	localSHA, err := exec.Command("git", "-C", gitRoot, "rev-parse", branch).Output()
 	if err != nil {

@@ -50,6 +50,12 @@ func NewTestEnv(t *testing.T) *TestEnv {
 	return &TestEnv{T: t, RepoDir: dir}
 }
 
+// NewTestEnvAt creates a TestEnv pointing at an existing git repo directory.
+func NewTestEnvAt(t *testing.T, dir string) *TestEnv {
+	t.Helper()
+	return &TestEnv{T: t, RepoDir: dir}
+}
+
 // RunCLI executes rekal with the given args from the test repo directory.
 // Returns stdout, stderr, and error.
 func (env *TestEnv) RunCLI(args ...string) (stdout, stderr string, err error) {
@@ -261,7 +267,7 @@ func TestStubCommands_RequireInit(t *testing.T) {
 }
 
 func TestStubCommands_NotYetImplemented(t *testing.T) {
-	commands := []string{"index", "log", "sync"}
+	commands := []string{"index", "sync"}
 
 	for _, name := range commands {
 		name := name

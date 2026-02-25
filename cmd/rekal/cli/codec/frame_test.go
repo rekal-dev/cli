@@ -186,12 +186,13 @@ func TestCheckpointFrame_Roundtrip(t *testing.T) {
 	defer dec.Close()
 
 	cf := &CheckpointFrame{
-		GitSHA:      "aaa111bbb222ccc333ddd444eee555fff666aaa1",
-		BranchRef:   0,
-		EmailRef:    0,
-		Timestamp:   time.Date(2026, 2, 25, 10, 30, 0, 0, time.UTC),
-		ActorType:   ActorHuman,
-		SessionRefs: []uint64{0, 1},
+		CheckpointRef: 42,
+		GitSHA:        "aaa111bbb222ccc333ddd444eee555fff666aaa1",
+		BranchRef:     0,
+		EmailRef:      0,
+		Timestamp:     time.Date(2026, 2, 25, 10, 30, 0, 0, time.UTC),
+		ActorType:     ActorHuman,
+		SessionRefs:   []uint64{0, 1},
 		Files: []FileTouchedRecord{
 			{PathRef: 0, ChangeType: ChangeModified},
 			{PathRef: 1, ChangeType: ChangeAdded},
@@ -212,6 +213,9 @@ func TestCheckpointFrame_Roundtrip(t *testing.T) {
 
 	if decoded.GitSHA != cf.GitSHA {
 		t.Errorf("git_sha: got %q, want %q", decoded.GitSHA, cf.GitSHA)
+	}
+	if decoded.CheckpointRef != 42 {
+		t.Errorf("checkpoint_ref: got %d, want 42", decoded.CheckpointRef)
 	}
 	if !decoded.Timestamp.Equal(cf.Timestamp) {
 		t.Errorf("ts: got %v, want %v", decoded.Timestamp, cf.Timestamp)

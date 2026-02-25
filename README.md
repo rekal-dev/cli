@@ -91,7 +91,7 @@ When a newer release is available, the CLI prints an update notice after each co
 | `rekal push` | Push Rekal data to the remote branch | Implemented |
 | `rekal sync [--self]` | Sync team context from remote rekal branches | Stub |
 | `rekal index` | Rebuild the index DB from the data DB | Stub |
-| `rekal log [--limit N]` | Show recent checkpoints | Stub |
+| `rekal log [--limit N]` | Show recent checkpoints | Implemented |
 | `rekal query "<sql>" [--index]` | Run raw SQL against the data or index DB | Implemented |
 | `rekal [filters...] [query]` | Recall — search sessions by content, file, or commit | Stub |
 

@@ -70,7 +70,7 @@ func InsertTurn(d *sql.DB, id, sessionID string, turnIndex int, role, content, t
 	_, err := d.Exec(
 		`INSERT INTO turns (id, session_id, turn_index, role, content, ts)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, sessionID, turnIndex, role, content, ts,
+		id, sessionID, turnIndex, role, content, nullIfEmpty(ts),
 	)
 	if err != nil {
 		return fmt.Errorf("insert turn: %w", err)
@@ -128,4 +128,225 @@ func InsertCheckpointSession(d *sql.DB, checkpointID, sessionID string) error {
 		return fmt.Errorf("insert checkpoint_session: %w", err)
 	}
 	return nil
+}
+
+// GetCheckpointState returns the cached state for a session file path.
+// Returns found=false if no entry exists.
+func GetCheckpointState(d *sql.DB, filePath string) (byteSize int64, fileHash string, found bool, err error) {
+	err = d.QueryRow(
+		"SELECT byte_size, file_hash FROM checkpoint_state WHERE file_path = $1",
+		filePath,
+	).Scan(&byteSize, &fileHash)
+	if err == sql.ErrNoRows {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, fmt.Errorf("get checkpoint_state: %w", err)
+	}
+	return byteSize, fileHash, true, nil
+}
+
+// UpsertCheckpointState inserts or updates the cached state for a session file.
+func UpsertCheckpointState(d *sql.DB, filePath string, byteSize int64, fileHash string) error {
+	_, err := d.Exec(
+		`INSERT INTO checkpoint_state (file_path, byte_size, file_hash)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (file_path) DO UPDATE SET byte_size = $2, file_hash = $3`,
+		filePath, byteSize, fileHash,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert checkpoint_state: %w", err)
+	}
+	return nil
+}
+
+// CheckpointRow represents a row from the checkpoints table.
+type CheckpointRow struct {
+	ID        string
+	GitSHA    string
+	GitBranch string
+	Email     string
+	Ts        string
+	ActorType string
+	AgentID   string
+}
+
+// QueryUnexportedCheckpoints returns checkpoints where exported = FALSE, ordered by ts.
+func QueryUnexportedCheckpoints(d *sql.DB) ([]CheckpointRow, error) {
+	rows, err := d.Query(
+		`SELECT id, git_sha, git_branch, user_email, ts, actor_type, COALESCE(agent_id, '')
+		 FROM checkpoints WHERE exported = FALSE ORDER BY ts`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query unexported checkpoints: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var result []CheckpointRow
+	for rows.Next() {
+		var r CheckpointRow
+		if err := rows.Scan(&r.ID, &r.GitSHA, &r.GitBranch, &r.Email, &r.Ts, &r.ActorType, &r.AgentID); err != nil {
+			return nil, fmt.Errorf("scan checkpoint: %w", err)
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// MarkCheckpointsExported sets exported = TRUE for the given checkpoint IDs.
+func MarkCheckpointsExported(d *sql.DB, ids []string) error {
+	for _, id := range ids {
+		if _, err := d.Exec("UPDATE checkpoints SET exported = TRUE WHERE id = $1", id); err != nil {
+			return fmt.Errorf("mark checkpoint exported: %w", err)
+		}
+	}
+	return nil
+}
+
+// QuerySessionsByCheckpoint returns session IDs linked to a checkpoint.
+func QuerySessionsByCheckpoint(d *sql.DB, checkpointID string) ([]string, error) {
+	rows, err := d.Query(
+		"SELECT session_id FROM checkpoint_sessions WHERE checkpoint_id = $1",
+		checkpointID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query checkpoint sessions: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan session id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SessionRow represents a session with its turns and tool calls.
+type SessionRow struct {
+	ID         string
+	Hash       string
+	CapturedAt string
+	ActorType  string
+	AgentID    string
+	Email      string
+	Branch     string
+}
+
+// TurnRow represents a turn from the turns table.
+type TurnRow struct {
+	TurnIndex int
+	Role      string
+	Content   string
+	Ts        string
+}
+
+// ToolCallRow represents a tool call from the tool_calls table.
+type ToolCallRow struct {
+	CallOrder int
+	Tool      string
+	Path      string
+	CmdPrefix string
+}
+
+// QuerySession returns a session row by ID.
+func QuerySession(d *sql.DB, id string) (*SessionRow, error) {
+	r := &SessionRow{}
+	err := d.QueryRow(
+		`SELECT id, session_hash, captured_at, actor_type, COALESCE(agent_id, ''), COALESCE(user_email, ''), COALESCE(branch, '')
+		 FROM sessions WHERE id = $1`, id,
+	).Scan(&r.ID, &r.Hash, &r.CapturedAt, &r.ActorType, &r.AgentID, &r.Email, &r.Branch)
+	if err != nil {
+		return nil, fmt.Errorf("query session: %w", err)
+	}
+	return r, nil
+}
+
+// QueryTurns returns turns for a session, ordered by turn_index.
+func QueryTurns(d *sql.DB, sessionID string) ([]TurnRow, error) {
+	rows, err := d.Query(
+		`SELECT turn_index, role, content, COALESCE(CAST(ts AS VARCHAR), '')
+		 FROM turns WHERE session_id = $1 ORDER BY turn_index`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query turns: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var result []TurnRow
+	for rows.Next() {
+		var r TurnRow
+		if err := rows.Scan(&r.TurnIndex, &r.Role, &r.Content, &r.Ts); err != nil {
+			return nil, fmt.Errorf("scan turn: %w", err)
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// QueryToolCalls returns tool calls for a session, ordered by call_order.
+func QueryToolCalls(d *sql.DB, sessionID string) ([]ToolCallRow, error) {
+	rows, err := d.Query(
+		`SELECT call_order, tool, COALESCE(path, ''), COALESCE(cmd_prefix, '')
+		 FROM tool_calls WHERE session_id = $1 ORDER BY call_order`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query tool_calls: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var result []ToolCallRow
+	for rows.Next() {
+		var r ToolCallRow
+		if err := rows.Scan(&r.CallOrder, &r.Tool, &r.Path, &r.CmdPrefix); err != nil {
+			return nil, fmt.Errorf("scan tool_call: %w", err)
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// QueryFilesTouched returns files touched for a checkpoint.
+func QueryFilesTouched(d *sql.DB, checkpointID string) ([]struct{ Path, ChangeType string }, error) {
+	rows, err := d.Query(
+		"SELECT file_path, change_type FROM files_touched WHERE checkpoint_id = $1",
+		checkpointID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query files_touched: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var result []struct{ Path, ChangeType string }
+	for rows.Next() {
+		var r struct{ Path, ChangeType string }
+		if err := rows.Scan(&r.Path, &r.ChangeType); err != nil {
+			return nil, fmt.Errorf("scan file_touched: %w", err)
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// CheckpointExists reports whether a checkpoint with the given ID exists.
+func CheckpointExists(d *sql.DB, id string) (bool, error) {
+	var count int
+	err := d.QueryRow("SELECT count(*) FROM checkpoints WHERE id = $1", id).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check checkpoint exists: %w", err)
+	}
+	return count > 0, nil
+}
+
+// SessionExistsByID reports whether a session with the given ID exists.
+func SessionExistsByID(d *sql.DB, id string) (bool, error) {
+	var count int
+	err := d.QueryRow("SELECT count(*) FROM sessions WHERE id = $1", id).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check session id: %w", err)
+	}
+	return count > 0, nil
 }
