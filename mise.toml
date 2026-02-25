@@ -1,7 +1,7 @@
 # Align Go version with go.mod (same as ref-projects/cli)
 [tools]
 go = { version = '1.25.6' }
-golangci-lint = 'v2.0.0'
+golangci-lint = '2.8.0'
 
 [tasks.fmt]
 description = "Run gofmt"
