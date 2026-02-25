@@ -87,12 +87,12 @@ When a newer release is available, the CLI prints an update notice after each co
 | `rekal init` | Initialize Rekal in the current git repository | Implemented |
 | `rekal clean` | Remove Rekal setup from this repository (local only) | Implemented |
 | `rekal version` | Print the CLI version | Implemented |
-| `rekal checkpoint` | Capture the current session after a commit | Stub |
+| `rekal checkpoint` | Capture the current session after a commit | Implemented |
 | `rekal push` | Push Rekal data to the remote branch | Stub |
-| `rekal sync` | Sync team context from remote rekal branches | Stub |
+| `rekal sync [--self]` | Sync team context from remote rekal branches | Stub |
 | `rekal index` | Rebuild the index DB from the data DB | Stub |
 | `rekal log [--limit N]` | Show recent checkpoints | Stub |
-| `rekal query "<sql>" [--index]` | Run raw SQL against the data or index DB | Stub |
+| `rekal query "<sql>" [--index]` | Run raw SQL against the data or index DB | Implemented |
 | `rekal [filters...] [query]` | Recall — search sessions by content, file, or commit | Stub |
 
 ### Recall Filters (root command)
@@ -144,14 +144,16 @@ rekal --file src/billing/ "why discount logic"
 
 Rekal uses two local DuckDB databases with distinct roles:
 
-- **Data DB** (`.rekal/data.db`) — Append-only shared truth. Session snapshots and checkpoint links. Synced to git as a compact binary wire format (~400 bytes per push).
+- **Data DB** (`.rekal/data.db`) — Append-only shared truth. Normalized tables: sessions, turns, tool calls, checkpoints, files touched. Synced to git on per-user orphan branches (`rekal/<email>`).
 - **Index DB** (`.rekal/index.db`) — Local-only search intelligence. Full-text indexes, vector embeddings, file co-occurrence graphs. Never synced. Rebuild anytime with `rekal index`.
 
 The data DB can be recovered from any point in time using git:
 
 ```bash
-git show rekal/alice@example.com~10:rekal_dump.sql | duckdb .rekal/data.db
+git show rekal/alice@example.com:data.db > .rekal/data.db
 ```
+
+Schema documentation: [docs/db/README.md](docs/db/README.md).
 
 ## Development
 
