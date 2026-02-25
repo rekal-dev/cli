@@ -23,7 +23,7 @@ Your agent starts every session knowing *why* the code looks the way it does.
 
 - **Team-shared memory** — `rekal push` and `rekal sync` share session context across your entire team through git. Every developer's agent benefits from every other developer's prior sessions.
 - **Immutable, conflict-free** — Session snapshots are append-only. Content-hash deduplication means two developers always write to disjoint rows — merge conflicts are structurally impossible.
-- **Signal, not bulk** — A 2-10 MB session file becomes a ~10 KB payload. A full year of team context is ~200 KB on the remote. The wire format is a custom binary codec with zstd compression, dictionary-based string deduplication, and varint-encoded references — each push costs ~400 bytes on the wire.
+- **Signal, not bulk** — A 2-10 MB session file becomes a ~300 byte payload. The wire format is a custom binary codec with zstd compression (preset dictionary), string interning via varint references, and append-only framing — each checkpoint appends ~200-300 bytes to the orphan branch.
 - **Git-native** — No external infrastructure. Rekal data lives on standard orphan branches, syncs through your existing remote, and uses git's object store for point-in-time recovery.
 - **DuckDB-powered** — Full-text search, vector embeddings, and file co-occurrence graphs built on DuckDB. The index is local-only and rebuilt on demand from the shared data.
 
@@ -64,7 +64,7 @@ When you commit, Rekal automatically snapshots your active AI session into a loc
 curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
 
 # Or with a specific version
-REKAL_VERSION=v0.0.4 curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
+REKAL_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
 ```
 
 Install location: `~/.local/bin` (override with `REKAL_INSTALL_DIR`).
@@ -142,18 +142,21 @@ rekal --file src/billing/ "why discount logic"
 
 ## Architecture
 
-Rekal uses two local DuckDB databases with distinct roles:
+Rekal uses two local DuckDB databases and a compact binary wire format:
 
-- **Data DB** (`.rekal/data.db`) — Append-only shared truth. Normalized tables: sessions, turns, tool calls, checkpoints, files touched. Synced to git on per-user orphan branches (`rekal/<email>`).
+- **Data DB** (`.rekal/data.db`) — Append-only shared truth. Normalized tables: sessions, turns, tool calls, checkpoints, files touched. The local query interface via `rekal query`.
 - **Index DB** (`.rekal/index.db`) — Local-only search intelligence. Full-text indexes, vector embeddings, file co-occurrence graphs. Never synced. Rebuild anytime with `rekal index`.
+- **Wire format** (`rekal.body` + `dict.bin`) — Stored on per-user orphan branches (`rekal/<email>`). Append-only binary frames with zstd compression. This is what gets pushed/synced via git — the DuckDB databases are rebuilt from it.
 
-The data DB can be recovered from any point in time using git:
+The wire format can be inspected from any point in time using git:
 
 ```bash
-git show rekal/alice@example.com:data.db > .rekal/data.db
+git log rekal/alice@example.com     # checkpoint history
+git show rekal/alice@example.com:dict.bin | xxd | head   # string dictionary
 ```
 
 Schema documentation: [docs/db/README.md](docs/db/README.md).
+Wire format rationale: [docs/git-transportation.md](docs/git-transportation.md).
 
 ## Development
 
