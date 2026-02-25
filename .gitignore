@@ -1,6 +1,6 @@
 # Built binary
-rekal
-rekal-old
+/rekal
+/rekal-old
 
 # Go
 *.exe
