@@ -47,7 +47,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch LFS objects
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git lfs install
+          git lfs fetch origin "${{ github.ref }}"
+          git lfs checkout
 
       - uses: jdx/mise-action@v3
 
@@ -69,7 +77,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          go build -ldflags "-s -w -X github.com/rekal-dev/cli/cmd/rekal/cli.Version=${VERSION}" \
+          go build -ldflags "-s -w -X github.com/rekal-dev/rekal-cli/cmd/rekal/cli.Version=${VERSION}" \
             -o rekal ./cmd/rekal
 
       - name: Create archive

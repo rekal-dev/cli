@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli/codec"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/skill"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/codec"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/skill"
 	"github.com/spf13/cobra"
 )
 

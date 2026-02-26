@@ -184,7 +184,7 @@ func isOutdated(current, latest string) bool {
 func updateCommand() string {
 	execPath, err := os.Executable()
 	if err != nil {
-		return "curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash"
+		return "curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash"
 	}
 
 	realPath, err := filepath.EvalSymlinks(execPath)
@@ -196,7 +196,7 @@ func updateCommand() string {
 		return "brew upgrade rekal"
 	}
 
-	return "curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash"
+	return "curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash"
 }
 
 func printNotification(w io.Writer, current, latest string) {

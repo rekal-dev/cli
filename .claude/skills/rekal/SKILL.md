@@ -1,0 +1,86 @@
+---
+name: rekal
+description: |
+  Use this skill when working in a repo with Rekal initialized (.rekal/ exists).
+  Rekal gives you memory of prior AI sessions — who changed what, why, and when.
+  Start with `rekal "keyword"` to search, then drill into sessions with
+  `rekal query --session <id>`. Run `rekal <command> --help` for full details.
+---
+
+# Rekal — Session Memory
+
+Rekal captures AI coding sessions (conversation turns, tool calls, file changes) and stores them in a local DuckDB database. Use it to understand prior context before modifying code.
+
+## When to Use
+
+- Before modifying a file — check what prior sessions touched it
+- When you need context about why code looks the way it does
+- When the user asks about prior session history
+- When working on files that were recently changed by AI agents
+
+## Workflow
+
+### 1. Search — find relevant sessions
+
+```bash
+rekal "JWT expiry"                      # keyword search (BM25 + LSA hybrid)
+rekal --file src/auth/ "token refresh"  # filter by file path (regex)
+rekal --actor agent "migration"         # filter by actor type
+rekal --author alice@co.com "billing"   # filter by author
+rekal -n 5 "error handling"            # limit results
+```
+
+Output is scored JSON with session IDs, snippets, and metadata.
+
+### 2. Drill down — progressive context loading
+
+Always start small to minimize token cost, then load more only when needed.
+
+```bash
+# Step 1: Start with human turns only — understand the intent cheaply
+rekal query --session 01JNQX... --role human
+
+# Step 2: If you need more detail, fetch a small page around a relevant turn
+# (search results include turn indices — use them as offset)
+rekal query --session 01JNQX... --offset 5 --limit 5
+
+# Step 3: Only fetch full output when you actually need tool calls and files
+rekal query --session 01JNQX... --full
+```
+
+Output includes `total_turns`, `offset`, `limit`, and `has_more` for navigation.
+
+Do NOT load all turns or use `--full` by default. The search results from step 1 give you
+enough context to decide what slice to load next.
+
+### 3. Raw SQL — for edge cases
+
+```bash
+rekal query "SELECT id, user_email, branch FROM sessions ORDER BY captured_at DESC LIMIT 5"
+rekal query --index "SELECT * FROM file_cooccurrence WHERE file_a LIKE '%auth%' ORDER BY count DESC"
+```
+
+Run `rekal query --help` for the full data DB and index DB schemas.
+
+## Filters (root command)
+
+| Flag | Description |
+|------|-------------|
+| `--file <regex>` | Filter by file path (regex, git-root-relative) |
+| `--commit <sha>` | Filter by git commit SHA |
+| `--author <email>` | Filter by author email |
+| `--actor <human\|agent>` | Filter by actor type |
+| `-n`, `--limit <n>` | Max results (default: 20, 0 = no limit) |
+
+## Self-Service
+
+Run `rekal <command> --help` for detailed help on any command, including
+the full DB schemas (`rekal query --help`).
+
+## Guidelines
+
+- Search before modifying files that have prior session history
+- Start with `rekal "keyword"` — only drop to raw SQL when the search workflow doesn't cover your need
+- Human turns contain the intent; assistant turns contain the reasoning
+- `actor_type` distinguishes human-initiated sessions from automated agent sessions
+- Join `turns` with `tool_calls` via `session_id` to get context around file changes

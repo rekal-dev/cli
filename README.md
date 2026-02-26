@@ -41,7 +41,7 @@ The full version: [SOUL.md](SOUL.md).
 Install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash
 ```
 
 Default location: `~/.local/bin`. Override with `--target <dir>` or `REKAL_INSTALL_DIR`.
@@ -227,7 +227,7 @@ Search stays under 200ms at 14k turns.
 ## Development
 
 ```bash
-git clone https://github.com/rekal-dev/cli.git rekal-cli
+git clone https://github.com/rekal-dev/rekal-cli.git rekal-cli
 cd rekal-cli
 mise install
 ```
@@ -241,7 +241,7 @@ rekal --help
 rekal <command> --help
 ```
 
-Issues: [github.com/rekal-dev/cli/issues](https://github.com/rekal-dev/cli/issues)
+Issues: [github.com/rekal-dev/rekal-cli/issues](https://github.com/rekal-dev/rekal-cli/issues)
 
 ## License
 

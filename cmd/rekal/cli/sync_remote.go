@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/codec"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/codec"
 )
 
 // fetchRemoteRekalRefs fetches all rekal/* branches from origin.

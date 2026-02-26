@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
 )
 
 func TestIndex_Rebuild(t *testing.T) {

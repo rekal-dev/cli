@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli"
 )
 
 // TestEnv provides an isolated git repo for integration testing.

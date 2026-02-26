@@ -35,7 +35,7 @@ golangci-lint run --timeout=5m ./...
 description = "Build the CLI"
 run = """
 VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
-go build -ldflags "-X github.com/rekal-dev/cli/cmd/rekal/cli.Version=${VERSION}" -o rekal ./cmd/rekal
+go build -ldflags "-X github.com/rekal-dev/rekal-cli/cmd/rekal/cli.Version=${VERSION}" -o rekal ./cmd/rekal
 """
 
 [tasks."build:all"]

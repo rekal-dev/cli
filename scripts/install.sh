@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITHUB_REPO="rekal-dev/cli"
+GITHUB_REPO="rekal-dev/rekal-cli"
 DEFAULT_INSTALL_DIR="${REKAL_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Colors (disabled in non-interactive mode)
@@ -82,7 +82,7 @@ main() {
         echo "For the beta release, only Claude Code is supported. Other coding agents will be supported in a future release."
         echo ""
         echo "  Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
-        echo "  Rekal docs:          https://github.com/rekal-dev/cli"
+        echo "  Rekal docs:          https://github.com/rekal-dev/rekal-cli"
         exit 1
     fi
 

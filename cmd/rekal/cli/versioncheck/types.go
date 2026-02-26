@@ -15,7 +15,7 @@ type GitHubRelease struct {
 
 // githubAPIURL is the GitHub API endpoint for fetching the latest release.
 // This is a var (not const) to allow overriding in tests.
-var githubAPIURL = "https://api.github.com/repos/rekal-dev/cli/releases/latest"
+var githubAPIURL = "https://api.github.com/repos/rekal-dev/rekal-cli/releases/latest"
 
 const (
 	// checkInterval is the duration between version checks.

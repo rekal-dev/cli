@@ -59,7 +59,7 @@ All commands below assume you are in the repo root unless noted.
 # Linux: apt install git-lfs
 git lfs install
 
-git clone https://github.com/rekal-dev/cli.git rekal-cli
+git clone https://github.com/rekal-dev/rekal-cli.git rekal-cli
 cd rekal-cli
 mise install                    # Install Go and golangci-lint per mise.toml
 ./scripts/install-hooks.sh      # Optional: run test + lint before every git push

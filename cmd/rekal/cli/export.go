@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli/codec"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/codec"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
 )
 
 // exportNewFrames reads existing wire format from the orphan branch, appends

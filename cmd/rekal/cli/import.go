@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/codec"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/codec"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
 )
 
 // importBranch decodes wire format from an orphan branch and imports

@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/lsa"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/nomic"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/lsa"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/nomic"
 	"github.com/spf13/cobra"
 )
 

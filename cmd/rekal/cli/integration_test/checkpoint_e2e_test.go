@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli/codec"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/session"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/codec"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/session"
 )
 
 const testSessionJSONL = `{"type":"summary","sessionId":"test-session-001","totalCost":0.05,"totalDuration":120}

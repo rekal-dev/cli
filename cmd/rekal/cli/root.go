@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rekal-dev/cli/cmd/rekal/cli/versioncheck"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/versioncheck"
 	"github.com/spf13/cobra"
 )
 

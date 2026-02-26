@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/rekal-dev/cli/cmd/rekal/cli"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli"
 )
 
 func main() {

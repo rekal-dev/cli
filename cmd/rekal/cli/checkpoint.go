@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
-	"github.com/rekal-dev/cli/cmd/rekal/cli/session"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/session"
 	"github.com/spf13/cobra"
 )
 

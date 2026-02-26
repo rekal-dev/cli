@@ -1,4 +1,4 @@
-module github.com/rekal-dev/cli
+module github.com/rekal-dev/rekal-cli
 
 go 1.25.6
 
