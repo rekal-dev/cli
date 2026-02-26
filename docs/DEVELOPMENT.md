@@ -27,6 +27,8 @@ rekal-cli/
 │       ├── version.go         # Version constant
 │       ├── versioncheck/      # Auto-update notification
 │       ├── db/                # DuckDB backend (open, close, schema)
+│       ├── lsa/               # LSA vector embeddings
+│       ├── nomic/             # Nomic deep semantic embeddings (CGO + llama.cpp)
 │       └── integration_test/  # Integration tests (//go:build integration)
 ├── docs/                      # Dev docs and specs
 │   ├── DEVELOPMENT.md         # This file
@@ -56,6 +58,44 @@ git clone https://github.com/rekal-dev/cli.git rekal-cli
 cd rekal-cli
 mise install                    # Install Go and golangci-lint per mise.toml
 ./scripts/install-hooks.sh      # Optional: run test + lint before every git push
+```
+
+#### Building llama.cpp (required for nomic embeddings)
+
+The nomic embedding package uses CGO bindings to llama.cpp. On supported platforms (darwin/arm64, linux/amd64), you need to build the native libraries once:
+
+```bash
+# Prerequisites: cmake, clang/gcc
+# macOS: brew install cmake
+# Linux: apt install cmake build-essential
+
+# Clone llama.cpp into .deps/
+git clone --depth 1 https://github.com/ggml-org/llama.cpp .deps/llama.cpp
+
+# Build static libraries
+cd .deps/llama.cpp
+cmake -B build \
+  -DLLAMA_METAL=ON \          # macOS only — omit on Linux
+  -DLLAMA_BUILD_TESTS=OFF \
+  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_SERVER=OFF \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(nproc) --target llama --target ggml --target common
+cd ../..
+```
+
+On Linux without GPU, omit `-DLLAMA_METAL=ON`. The nomic package gracefully degrades on unsupported platforms — if the build isn't available, embeddings are skipped and search falls back to BM25 + LSA.
+
+#### Downloading the nomic model
+
+The Q8_0 GGUF model (~134MB gzipped) is embedded in the binary via `//go:embed`. It should already be present at `cmd/rekal/cli/nomic/models/nomic-embed-text-v1.5.Q8_0.gguf.gz`. If missing:
+
+```bash
+curl -L -o /tmp/nomic.gguf \
+  "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
+gzip -9 /tmp/nomic.gguf
+mv /tmp/nomic.gguf.gz cmd/rekal/cli/nomic/models/nomic-embed-text-v1.5.Q8_0.gguf.gz
 ```
 
 ### 1.4 Daily workflow

@@ -24,9 +24,10 @@ See [preconditions.md](../preconditions.md): must be in a git repository and ini
    - `session_facets` — Aggregated session metadata (email, branch, actor, counts, checkpoint/SHA)
    - `file_cooccurrence` — Self-join on tool call paths within same session
 5. **Create FTS index** — DuckDB BM25 full-text search on `turns_ft.content` (only if turns exist).
-6. **LSA pass** — Build LSA model from session content (only if 2+ sessions), store embeddings in `session_embeddings`.
-7. **Write index state** — Record `session_count`, `turn_count`, `embedding_dim`, `last_indexed_at`.
-8. **Print summary** — `index rebuilt: N sessions, N turns`.
+6. **LSA pass** — Build LSA model from session content (only if 2+ sessions), store embeddings in `session_embeddings` with model `lsa-v1`.
+7. **Nomic pass** — Generate nomic-embed-text deep semantic embeddings (only on supported platforms: darwin/arm64, linux/amd64). Store in `session_embeddings` with model `nomic-v1.5`. Non-fatal — skipped with a warning if unavailable or fails.
+8. **Write index state** — Record `session_count`, `turn_count`, `embedding_dim`, `last_indexed_at`.
+9. **Print summary** — `index rebuilt: N sessions, N turns`.
 
 ---
 

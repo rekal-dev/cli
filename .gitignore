@@ -22,3 +22,6 @@
 # Local config (optional; uncomment if you don't want to track)
 # .config/
 .rekal/
+
+# Build dependencies (llama.cpp)
+.deps/

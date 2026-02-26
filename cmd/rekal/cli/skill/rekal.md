@@ -11,6 +11,8 @@ description: |
 
 Rekal captures AI coding sessions (conversation turns, tool calls, file changes) and stores them in a local DuckDB database. Use it to understand prior context before modifying code.
 
+Search understands what you mean, not just what you type — powered by an embedded deep semantic model (nomic-embed-text) that runs entirely on your machine. No external APIs, no setup.
+
 ## Binary
 
 If `rekal` is not on PATH, run `export PATH="$HOME/.local/bin:$PATH"` first.
@@ -28,7 +30,7 @@ The presence of this skill file means the binary is installed.
 ### 1. Search — find relevant sessions
 
 ```bash
-rekal "JWT expiry"                      # keyword search (BM25 + LSA hybrid)
+rekal "JWT expiry"                      # keyword search (BM25 + LSA + Nomic hybrid)
 rekal --file src/auth/ "token refresh"  # filter by file path (regex)
 rekal --actor agent "migration"         # filter by actor type
 rekal --author alice@co.com "billing"   # filter by author

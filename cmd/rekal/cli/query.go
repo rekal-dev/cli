@@ -48,7 +48,8 @@ INDEX DB SCHEMA (.rekal/index.db):
                        captured_at, turn_count, tool_call_count, file_count,
                        checkpoint_id, git_sha
   file_cooccurrence    file_a, file_b, count
-  session_embeddings   session_id, embedding, model, generated_at`,
+  session_embeddings   session_id, embedding, model, generated_at
+                       PK: (session_id, model). Models: lsa-v1, nomic-v1.5`,
 		Example: `  # Drill into a session (turns only)
   rekal query --session 01JNQX...
 
@@ -65,7 +66,10 @@ INDEX DB SCHEMA (.rekal/index.db):
   rekal query "SELECT path, count(*) as n FROM tool_calls WHERE tool IN ('Write','Edit') AND path IS NOT NULL GROUP BY path ORDER BY n DESC LIMIT 10"
 
   # File co-occurrence (index DB)
-  rekal query --index "SELECT * FROM file_cooccurrence WHERE file_a LIKE '%auth%' ORDER BY count DESC LIMIT 10"`,
+  rekal query --index "SELECT * FROM file_cooccurrence WHERE file_a LIKE '%auth%' ORDER BY count DESC LIMIT 10"
+
+  # Embedding model counts
+  rekal query --index "SELECT model, count(*) FROM session_embeddings GROUP BY model"`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true

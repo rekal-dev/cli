@@ -10,14 +10,22 @@ import (
 
 	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
 	"github.com/rekal-dev/cli/cmd/rekal/cli/lsa"
+	"github.com/rekal-dev/cli/cmd/rekal/cli/nomic"
 	"github.com/spf13/cobra"
 )
 
 const (
 	defaultSnippetSize = 300
-	defaultBM25Weight  = 0.4
-	defaultLSAWeight   = 0.6
 	defaultLimit       = 20
+
+	// 2-way weights (fallback when nomic is unavailable).
+	bm25Weight2Way = 0.4
+	lsaWeight2Way  = 0.6
+
+	// 3-way weights (full hybrid with nomic).
+	bm25Weight3Way  = 0.3
+	lsaWeight3Way   = 0.2
+	nomicWeight3Way = 0.5
 )
 
 // RecallFilters holds the search parameters for the recall command.
@@ -151,7 +159,10 @@ func hybridSearch(indexDB *sql.DB, filters RecallFilters, limit int) ([]searchRe
 		lsaScores = nil
 	}
 
-	// Step 3: Group by session, pick best turn per session.
+	// Step 3: Nomic deep semantic search (non-fatal).
+	nomicScores, _ := nomicSearch(indexDB, filters.Query)
+
+	// Step 4: Group by session, pick best turn per session.
 	sessions := make(map[string]*sessionHit)
 
 	for _, hit := range bm25Hits {
@@ -193,7 +204,26 @@ func hybridSearch(indexDB *sql.DB, filters RecallFilters, limit int) ([]searchRe
 		}
 	}
 
-	// Compute hybrid scores.
+	// Add nomic scores.
+	for sid, score := range nomicScores {
+		sh, ok := sessions[sid]
+		if !ok {
+			sh = &sessionHit{}
+			sessions[sid] = sh
+		}
+		sh.nomicScore = score
+	}
+
+	// Normalize nomic scores to [0,1].
+	var maxNomic float64
+	for _, sh := range sessions {
+		if sh.nomicScore > maxNomic {
+			maxNomic = sh.nomicScore
+		}
+	}
+
+	// Compute hybrid scores — 3-way when nomic available, 2-way fallback.
+	useNomic := len(nomicScores) > 0
 	var scoredResults []scored
 	for sid, sh := range sessions {
 		bm25Norm := 0.0
@@ -204,7 +234,17 @@ func hybridSearch(indexDB *sql.DB, filters RecallFilters, limit int) ([]searchRe
 		if maxLSA > 0 {
 			lsaNorm = sh.lsaScore / maxLSA
 		}
-		hybrid := defaultBM25Weight*bm25Norm + defaultLSAWeight*lsaNorm
+
+		var hybrid float64
+		if useNomic {
+			nomicNorm := 0.0
+			if maxNomic > 0 {
+				nomicNorm = sh.nomicScore / maxNomic
+			}
+			hybrid = bm25Weight3Way*bm25Norm + lsaWeight3Way*lsaNorm + nomicWeight3Way*nomicNorm
+		} else {
+			hybrid = bm25Weight2Way*bm25Norm + lsaWeight2Way*lsaNorm
+		}
 		scoredResults = append(scoredResults, scored{sid, hybrid, sh})
 	}
 
@@ -337,26 +377,11 @@ func bm25Search(indexDB *sql.DB, query string) ([]bm25Hit, error) {
 }
 
 func lsaSearch(indexDB *sql.DB, query string) (map[string]float64, error) {
-	// Load all embeddings.
-	rows, err := indexDB.Query("SELECT session_id, embedding FROM session_embeddings")
+	// Load LSA embeddings only.
+	embeddings, err := db.QueryEmbeddings(indexDB, "lsa-v1")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() //nolint:errcheck
-
-	embeddings := make(map[string][]float64)
-	for rows.Next() {
-		var sid string
-		var emb []float64
-		if err := rows.Scan(&sid, &emb); err != nil {
-			return nil, err
-		}
-		embeddings[sid] = emb
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
 	if len(embeddings) == 0 {
 		return nil, nil
 	}
@@ -373,6 +398,41 @@ func lsaSearch(indexDB *sql.DB, query string) (map[string]float64, error) {
 	}
 
 	queryVec := model.Embed(query)
+
+	scores := make(map[string]float64)
+	for sid, emb := range embeddings {
+		sim := lsa.CosineSimilarity(queryVec, emb)
+		if sim > 0 {
+			scores[sid] = sim
+		}
+	}
+	return scores, nil
+}
+
+// nomicSearch computes deep semantic similarity using nomic-embed-text embeddings.
+// Non-fatal: returns nil on any failure or when nomic is unavailable.
+func nomicSearch(indexDB *sql.DB, query string) (map[string]float64, error) {
+	if !nomic.Supported() {
+		return nil, nil
+	}
+
+	// Load stored nomic embeddings.
+	embeddings, err := db.QueryEmbeddings(indexDB, nomic.ModelName)
+	if err != nil || len(embeddings) == 0 {
+		return nil, err
+	}
+
+	// Load embedder and embed the query.
+	embedder, err := nomic.NewEmbedder()
+	if err != nil {
+		return nil, err
+	}
+	defer embedder.Close()
+
+	queryVec, err := embedder.EmbedQuery(query)
+	if err != nil {
+		return nil, err
+	}
 
 	scores := make(map[string]float64)
 	for sid, emb := range embeddings {
@@ -479,9 +539,10 @@ type scored struct {
 }
 
 type sessionHit struct {
-	bestHit  bm25Hit
-	bm25Max  float64
-	lsaScore float64
+	bestHit    bm25Hit
+	bm25Max    float64
+	lsaScore   float64
+	nomicScore float64
 }
 
 func sortScored(s []scored) {

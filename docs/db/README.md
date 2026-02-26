@@ -202,3 +202,139 @@ Cross-user relationships are handled by `user_email` + `rekal sync`. Each user's
 | `checkpoints` | `rekal checkpoint` | TODO — insert after orphan branch commit |
 | `files_touched` | `rekal checkpoint` | TODO — from `git diff --name-status` |
 | `checkpoint_sessions` | `rekal checkpoint` | TODO — link checkpoint to sessions |
+
+---
+
+# Rekal Index DB Schema
+
+Index DB (`.rekal/index.db`) is derived from the data DB. Local-only, never synced. Rebuilt from scratch by `rekal index` or `rekal sync`. Incrementally updated by `rekal checkpoint`.
+
+Engine: DuckDB.
+
+---
+
+## `turns_ft`
+
+Full-text search index over conversation turns. Copy of `turns` from data DB, indexed by DuckDB's FTS extension for BM25 scoring.
+
+```sql
+CREATE TABLE IF NOT EXISTS turns_ft (
+    id              VARCHAR PRIMARY KEY,
+    session_id      VARCHAR NOT NULL,
+    turn_index      INTEGER NOT NULL,
+    role            VARCHAR NOT NULL,
+    content         VARCHAR NOT NULL,
+    ts              VARCHAR
+);
+```
+
+---
+
+## `tool_calls_index`
+
+Indexed copy of tool calls for fast lookup by tool, path, or session.
+
+```sql
+CREATE TABLE IF NOT EXISTS tool_calls_index (
+    id              VARCHAR PRIMARY KEY,
+    session_id      VARCHAR NOT NULL,
+    call_order      INTEGER NOT NULL,
+    tool            VARCHAR NOT NULL,
+    path            VARCHAR,
+    cmd_prefix      VARCHAR
+);
+```
+
+---
+
+## `files_index`
+
+Denormalized file changes with session linkage for file-based filtering.
+
+```sql
+CREATE TABLE IF NOT EXISTS files_index (
+    checkpoint_id   VARCHAR NOT NULL,
+    session_id      VARCHAR NOT NULL,
+    file_path       VARCHAR NOT NULL,
+    change_type     VARCHAR NOT NULL
+);
+```
+
+---
+
+## `session_facets`
+
+Aggregated session metadata for fast filtering and display.
+
+```sql
+CREATE TABLE IF NOT EXISTS session_facets (
+    session_id      VARCHAR NOT NULL,
+    user_email      VARCHAR,
+    git_branch      VARCHAR,
+    actor_type      VARCHAR,
+    agent_id        VARCHAR,
+    captured_at     TIMESTAMP,
+    turn_count      INTEGER,
+    tool_call_count INTEGER,
+    file_count      INTEGER,
+    checkpoint_id   VARCHAR,
+    git_sha         VARCHAR
+);
+```
+
+---
+
+## `session_embeddings`
+
+Vector embeddings for semantic search. Stores both LSA and nomic-embed-text vectors, keyed by `(session_id, model)`.
+
+```sql
+CREATE TABLE IF NOT EXISTS session_embeddings (
+    session_id      VARCHAR NOT NULL,
+    embedding       FLOAT[],
+    model           VARCHAR NOT NULL,
+    generated_at    TIMESTAMP NOT NULL,
+    PRIMARY KEY (session_id, model)
+);
+```
+
+| Column | Description |
+|--------|-------------|
+| `session_id` | FK → session being embedded |
+| `embedding` | Vector as FLOAT array. Dimension depends on model |
+| `model` | Model identifier: `"lsa-v1"` (variable dim) or `"nomic-v1.5"` (768 dim) |
+| `generated_at` | When the embedding was computed |
+
+**Scoring weights:**
+- When nomic is available (3-way): BM25 0.3, LSA 0.2, Nomic 0.5
+- When nomic is unavailable (2-way fallback): BM25 0.4, LSA 0.6
+
+---
+
+## `file_cooccurrence`
+
+File co-occurrence graph derived from tool calls. Two files that appear in the same session are co-occurring.
+
+```sql
+CREATE TABLE IF NOT EXISTS file_cooccurrence (
+    file_a          VARCHAR NOT NULL,
+    file_b          VARCHAR NOT NULL,
+    session_count   INTEGER NOT NULL,
+    PRIMARY KEY (file_a, file_b)
+);
+```
+
+---
+
+## `index_state`
+
+Metadata about the last index build.
+
+```sql
+CREATE TABLE IF NOT EXISTS index_state (
+    session_count   INTEGER,
+    turn_count      INTEGER,
+    embedding_dim   INTEGER,
+    last_indexed_at TIMESTAMP
+);
+```

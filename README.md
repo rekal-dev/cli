@@ -21,47 +21,48 @@ Your agent starts every session knowing *why* the code looks the way it does.
 
 ## What Makes Rekal Different
 
-- **Security first** — Everything stays local. Nothing leaves the boundaries of git. No external services, no cloud APIs, no telemetry. A single binary with zero runtime dependencies beyond git itself.
+- **Security first** — Everything stays local. Nothing leaves the boundaries of git. No external services, no cloud APIs, no telemetry. A single binary with zero runtime dependencies beyond git itself. Even the embedding model (nomic-embed-text-v1.5) ships inside the binary — no downloads, no servers, no setup.
 - **Immutable by design** — Session snapshots are append-only. Content-hash deduplication means two developers always write to disjoint rows — merge conflicts are structurally impossible. Rekal never updates or deletes a session row.
 - **Team-shared memory** — `rekal push` and `rekal sync` share session context across your entire team through git. Every developer's agent benefits from every other developer's prior sessions.
 - **Git-native** — No external infrastructure. Rekal data lives on standard orphan branches, syncs through your existing remote, and uses git's object store for point-in-time recovery. Every checkpoint is anchored to a commit SHA.
-- **DuckDB-powered** — Full-text search (BM25), LSA vector embeddings, and file co-occurrence graphs built on DuckDB. The index is local-only and rebuilt on demand from the shared data.
+- **DuckDB-powered** — Full-text search (BM25), LSA vector embeddings, and nomic-embed-text deep semantic embeddings — all running locally inside a single binary. Three-way hybrid scoring (BM25 + LSA + Nomic) with graceful fallback on unsupported platforms. File co-occurrence graphs built on DuckDB. The index is local-only and rebuilt on demand from the shared data.
 - **Agent-first** — Progressive context loading. `rekal <query>` returns scored snippets and metadata — just enough for the agent to decide what matters. `rekal query --session <id>` drills into a specific session for full turns. The agent controls how much context it loads.
 - **Signal, not bulk** — A 2-10 MB session file becomes a ~300 byte payload. The wire format is a custom binary codec with zstd compression, string interning via varint references, and append-only framing.
 
 ## How It Works
 
 ```mermaid
-flowchart TB
-    subgraph capture ["Capture (post-commit hook)"]
-        A["AI Session<br/>prompts, responses,<br/>tool calls, files"] -->|"rekal checkpoint"| B["data.db<br/><i>DuckDB — append-only</i>"]
+flowchart LR
+    subgraph capture ["Capture"]
+        A["AI Session"] -->|"rekal checkpoint<br/>(post-commit)"| B[("data.db<br/>append-only")]
     end
 
-    subgraph index ["Index (local-only, rebuilt on demand)"]
-        B -->|"rekal index"| C["index.db<br/><i>DuckDB — derived</i>"]
-        C --- D["BM25 full-text search"]
-        C --- E["LSA vector embeddings"]
-        C --- F["File co-occurrence graph"]
-        C --- G["Session facets &amp; filters"]
+    subgraph transport ["Transport"]
+        B -->|"rekal push"| C["Wire Format<br/>zstd + varint interning"]
+        C -->|"git push<br/>rekal/&lt;email&gt;"| D[("Remote<br/>orphan branch")]
     end
 
-    subgraph transport ["Transport (git orphan branches)"]
-        B -->|"rekal push"| H["Wire Format<br/><i>rekal.body + dict.bin</i><br/>zstd · varint interning · append-only"]
-        H -->|"git push origin<br/>rekal/&lt;email&gt;"| I["Remote<br/><i>per-user orphan branch</i>"]
-        I -->|"rekal sync"| C
+    subgraph index ["Index"]
+        B -->|"rekal index"| E[("index.db<br/>local-only")]
+        D -->|"rekal sync"| E
+        E --- F["BM25 FTS"]
+        E --- G["LSA Embeddings"]
+        E --- N["Nomic Deep Embeddings"]
+        E --- H["Co-occurrence"]
+        E --- I["Facets"]
     end
 
-    subgraph query ["Query (agent-driven)"]
-        J["rekal 'keyword'"] -->|"hybrid BM25 + LSA"| C
-        C -->|"scored JSON"| K["Agent"]
-        K -->|"rekal query --session &lt;id&gt;"| B
+    subgraph query ["Query"]
+        J["rekal 'keyword'"] -->|"hybrid search"| E
+        E -->|"scored JSON"| K["Agent"]
+        K -->|"rekal query<br/>--session &lt;id&gt;"| B
         B -->|"full conversation"| K
     end
 
-    style capture fill:#1a1a2e,stroke:#e94560,color:#eee
-    style index fill:#1a1a2e,stroke:#0f3460,color:#eee
-    style transport fill:#1a1a2e,stroke:#16213e,color:#eee
-    style query fill:#1a1a2e,stroke:#533483,color:#eee
+    style capture fill:#fff5f5,stroke:#e94560,color:#333
+    style transport fill:#f0fdf4,stroke:#22c55e,color:#333
+    style index fill:#f0f4ff,stroke:#3b82f6,color:#333
+    style query fill:#faf5ff,stroke:#a855f7,color:#333
 ```
 
 When you commit, Rekal automatically snapshots your active AI session into a local DuckDB database. `rekal push` shares it with your team on a per-user orphan branch — your git history stays clean.
@@ -77,9 +78,11 @@ When you commit, Rekal automatically snapshots your active AI session into a loc
 # Install
 curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash
 
+# Install to a specific directory
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/cli/main/scripts/install.sh | bash -s -- --target /opt/bin
 ```
 
-Install location: `~/.local/bin` (override with `REKAL_INSTALL_DIR`).
+Install location: `~/.local/bin` (override with `--target <dir>` or `REKAL_INSTALL_DIR`).
 
 ```bash
 # Initialize in a git repo
@@ -104,7 +107,7 @@ When a newer release is available, the CLI prints an update notice after each co
 | `rekal sync [--self]` | Sync team context from remote rekal branches |
 | `rekal index` | Rebuild the index DB from the data DB |
 | `rekal log [--limit N]` | Show recent checkpoints |
-| `rekal [filters...] [query]` | Recall — hybrid search (BM25 + LSA) over sessions |
+| `rekal [filters...] [query]` | Recall — hybrid search (BM25 + LSA + Nomic) over sessions |
 | `rekal query --session <id> [--full]` | Drill into a session (turns, tool calls, files) |
 | `rekal query "<sql>" [--index]` | Run raw SQL against the data or index DB |
 
@@ -161,7 +164,7 @@ rekal --file src/billing/ "why discount logic"
 Rekal uses two local DuckDB databases and a compact binary wire format:
 
 - **Data DB** (`.rekal/data.db`) — Append-only shared truth. Normalized tables: sessions, turns, tool calls, checkpoints, files touched. The local query interface via `rekal query`.
-- **Index DB** (`.rekal/index.db`) — Local-only search intelligence. Full-text indexes (BM25), LSA vector embeddings, file co-occurrence graphs. Never synced. Rebuild anytime with `rekal index`.
+- **Index DB** (`.rekal/index.db`) — Local-only search intelligence. Full-text indexes (BM25), LSA vector embeddings, nomic-embed-text deep semantic embeddings, file co-occurrence graphs. Never synced. Rebuild anytime with `rekal index`.
 - **Wire format** (`rekal.body` + `dict.bin`) — Stored on per-user orphan branches (`rekal/<email>`). Append-only binary frames with zstd compression. This is what gets pushed/synced via git — the DuckDB databases are rebuilt from it.
 
 The wire format can be inspected from any point in time using git:

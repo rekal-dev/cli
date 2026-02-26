@@ -158,6 +158,11 @@ func runSyncTeam(cmd *cobra.Command, gitRoot string) error {
 			}
 			embeddingDim = model.Dim
 		}
+
+		// 5d-ii: Nomic pass (non-fatal).
+		if err := buildNomicEmbeddings(indexDB, sessionContent, w); err != nil {
+			fmt.Fprintf(w, "warning: nomic embeddings skipped: %v\n", err)
+		}
 	}
 
 	// 5e: Write index state.

@@ -138,10 +138,11 @@ CREATE TABLE IF NOT EXISTS file_cooccurrence (
 );
 
 CREATE TABLE IF NOT EXISTS session_embeddings (
-	session_id      VARCHAR PRIMARY KEY,
+	session_id      VARCHAR NOT NULL,
 	embedding       FLOAT[],
 	model           VARCHAR NOT NULL,
-	generated_at    TIMESTAMP NOT NULL
+	generated_at    TIMESTAMP NOT NULL,
+	PRIMARY KEY (session_id, model)
 );
 
 CREATE TABLE IF NOT EXISTS index_state (

@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"database/sql"
 	"fmt"
+	"io"
 	"strconv"
 
 	"github.com/rekal-dev/cli/cmd/rekal/cli/db"
 	"github.com/rekal-dev/cli/cmd/rekal/cli/lsa"
+	"github.com/rekal-dev/cli/cmd/rekal/cli/nomic"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +20,8 @@ func newIndexCmd() *cobra.Command {
 
 The index is local-only and never synced. It contains:
   - Full-text search index (BM25) over conversation turns
-  - LSA vector embeddings for semantic similarity
+  - LSA vector embeddings for lightweight semantic similarity
+  - Nomic deep semantic embeddings (on supported platforms)
   - Session facets (author, branch, actor, counts) for fast filtering
   - File co-occurrence graph
   - Tool call indexes
@@ -108,7 +112,12 @@ func runIndex(cmd *cobra.Command, gitRoot string) error {
 				return fmt.Errorf("store embeddings: %w", err)
 			}
 			embeddingDim = model.Dim
-			fmt.Fprintf(w, "stored %d embeddings (%d dimensions)\n", len(vectors), embeddingDim)
+			fmt.Fprintf(w, "stored %d LSA embeddings (%d dimensions)\n", len(vectors), embeddingDim)
+		}
+
+		// Nomic pass (non-fatal).
+		if err := buildNomicEmbeddings(indexDB, sessionContent, w); err != nil {
+			fmt.Fprintf(w, "warning: nomic embeddings skipped: %v\n", err)
 		}
 	}
 
@@ -127,5 +136,31 @@ func runIndex(cmd *cobra.Command, gitRoot string) error {
 	}
 
 	fmt.Fprintf(w, "index rebuilt: %d sessions, %d turns\n", sessionCount, turnCount)
+	return nil
+}
+
+// buildNomicEmbeddings generates nomic-embed-text embeddings for all sessions
+// and stores them in the index DB. Non-fatal: returns error on any failure.
+func buildNomicEmbeddings(indexDB *sql.DB, sessionContent map[string]string, w io.Writer) error {
+	if !nomic.Supported() {
+		return nil
+	}
+
+	fmt.Fprintln(w, "building nomic deep semantic embeddings...")
+	embedder, err := nomic.NewEmbedder()
+	if err != nil {
+		return err
+	}
+	defer embedder.Close()
+
+	vectors, err := embedder.EmbedSessions(sessionContent)
+	if err != nil {
+		return err
+	}
+
+	if err := db.StoreEmbeddings(indexDB, vectors, nomic.ModelName); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "stored %d nomic embeddings (%d dimensions)\n", len(vectors), nomic.EmbedDim)
 	return nil
 }

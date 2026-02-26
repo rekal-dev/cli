@@ -12,7 +12,7 @@ import (
 const gettingStarted = `
 
 Workflow:
-  rekal "keyword"                   Search sessions (BM25 + LSA hybrid)
+  rekal "keyword"                   Search sessions (BM25 + LSA + Nomic hybrid)
   rekal --file auth "token refresh" Filter by file path
   rekal query --session <id>        Drill into a session (full turns)
   rekal query --session <id> --full Include tool calls and files

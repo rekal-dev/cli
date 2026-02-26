@@ -28,6 +28,8 @@ This repo contains the CLI for Rekal — gives your agent precise memory.
   - `version.go`: Version constant (set via ldflags)
   - `versioncheck/`: Auto-update notification
   - `db/`: DuckDB backend (open, close, schema)
+  - `lsa/`: Latent Semantic Analysis embeddings
+  - `nomic/`: Nomic-embed-text deep semantic embeddings (platform build tags)
   - `integration_test/`: Integration tests (`//go:build integration`)
 
 ### Specifications (`docs/spec/`)
@@ -140,7 +142,7 @@ All commands except `init` and `clean` must call both:
 
 Two databases in `.rekal/`:
 - `data.db` — source of truth (sessions, checkpoints, files_touched, checkpoint_sessions)
-- `index.db` — derived index (turns_ft, tool_calls_index, files_index, session_facets, file_cooccurrence)
+- `index.db` — derived index (turns_ft, tool_calls_index, files_index, session_facets, file_cooccurrence, session_embeddings with LSA + nomic vectors)
 
 Use the `db` package to open connections:
 ```go

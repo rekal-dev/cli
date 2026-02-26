@@ -1,6 +1,6 @@
 # rekal checkpoint
 
-**Role:** Capture the current session after a commit. Invoked by the post-commit hook; can also be run manually. Does not update the index.
+**Role:** Capture the current session after a commit. Invoked by the post-commit hook; can also be run manually. Incrementally updates the index for newly captured sessions.
 
 **Invocation:** `rekal checkpoint`.
 
@@ -26,7 +26,15 @@ See [preconditions.md](../preconditions.md): must be in a git repository and ini
    - Update `checkpoint_state` cache.
 7. **Create checkpoint** — Insert a `checkpoints` row linking to the HEAD commit SHA, branch, email.
 8. **Link sessions** — Insert `checkpoint_sessions` junction rows and `files_touched` rows (from `git diff --name-status HEAD~1 HEAD`).
-9. **Print summary** — `rekal: N session(s) captured` (silent if nothing new).
+9. **Incremental index update** — If index.db exists, incrementally add new sessions to the index:
+   - Insert turns into `turns_ft` (auto-indexed by DuckDB FTS).
+   - Insert tool calls into `tool_calls_index`.
+   - Insert session facets into `session_facets`.
+   - Insert file entries into `files_index`.
+   - Generate nomic-embed-text embeddings for new sessions (on supported platforms).
+   - LSA embeddings are skipped (require full corpus rebuild via `rekal index`).
+   - Non-fatal: if incremental update fails, a warning is printed and the index can be rebuilt later with `rekal index`.
+10. **Print summary** — `rekal: N session(s) captured` (silent if nothing new).
 
 ---
 

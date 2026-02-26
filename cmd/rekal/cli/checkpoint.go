@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -243,6 +244,12 @@ func doCheckpoint(gitRoot string, w io.Writer) error {
 		}
 	}
 
+	// Incrementally update the index for newly captured sessions.
+	if err := updateIndexIncremental(gitRoot, sessionIDs, checkpointID, w); err != nil {
+		// Non-fatal — index can be rebuilt later with 'rekal index'.
+		fmt.Fprintf(w, "rekal: warning: incremental index update failed: %v\n", err)
+	}
+
 	fmt.Fprintf(w, "rekal: %d session(s) captured\n", inserted)
 	return nil
 }
@@ -290,4 +297,40 @@ func gitShowFile(gitRoot, ref, path string) []byte {
 func sha256Hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
+}
+
+// updateIndexIncremental adds newly captured sessions to the index DB
+// without a full rebuild. Handles: turns_ft, tool_calls_index, session_facets,
+// files_index, and nomic embeddings. LSA is skipped (requires full corpus).
+// FTS pragma_create_fts_index is not re-run — new rows in turns_ft are
+// automatically indexed by DuckDB's FTS.
+func updateIndexIncremental(gitRoot string, sessionIDs []string, checkpointID string, w io.Writer) error {
+	indexPath := filepath.Join(gitRoot, ".rekal", "index.db")
+	if _, err := os.Stat(indexPath); err != nil {
+		// No index DB yet — skip incremental update. Next 'rekal index' or 'rekal sync' will build it.
+		return nil
+	}
+
+	indexDB, err := db.OpenIndex(gitRoot)
+	if err != nil {
+		return err
+	}
+	defer indexDB.Close()
+
+	// Populate index tables for new sessions.
+	if err := db.PopulateIndexIncremental(indexDB, gitRoot, sessionIDs, checkpointID); err != nil {
+		return fmt.Errorf("populate index: %w", err)
+	}
+
+	// Nomic embeddings for new sessions (non-fatal).
+	sessionContent, err := db.QuerySessionContentByIDs(indexDB, sessionIDs)
+	if err != nil || len(sessionContent) == 0 {
+		return err
+	}
+
+	if err := buildNomicEmbeddings(indexDB, sessionContent, w); err != nil {
+		fmt.Fprintf(w, "rekal: warning: nomic embeddings skipped: %v\n", err)
+	}
+
+	return nil
 }

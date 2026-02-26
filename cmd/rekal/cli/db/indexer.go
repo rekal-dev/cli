@@ -268,6 +268,119 @@ func float64SliceToDuckDB(v []float64) string {
 	return b.String()
 }
 
+// QueryEmbeddings returns session_id → embedding vector for a given model.
+func QueryEmbeddings(d *sql.DB, model string) (map[string][]float64, error) {
+	rows, err := d.Query("SELECT session_id, embedding FROM session_embeddings WHERE model = $1", model)
+	if err != nil {
+		return nil, fmt.Errorf("query embeddings: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make(map[string][]float64)
+	for rows.Next() {
+		var sid string
+		var emb []float64
+		if err := rows.Scan(&sid, &emb); err != nil {
+			return nil, fmt.Errorf("scan embedding: %w", err)
+		}
+		result[sid] = emb
+	}
+	return result, rows.Err()
+}
+
+// PopulateIndexIncremental adds new sessions to the index without a full rebuild.
+// sessionIDs are the newly captured sessions. checkpointID is the new checkpoint.
+func PopulateIndexIncremental(d *sql.DB, gitRoot string, sessionIDs []string, checkpointID string) error {
+	dataPath := filepath.Join(gitRoot, ".rekal", "data.db")
+
+	if _, err := d.Exec(fmt.Sprintf("ATTACH '%s' AS data_db (READ_ONLY)", dataPath)); err != nil {
+		return fmt.Errorf("attach data_db: %w", err)
+	}
+	defer d.Exec("DETACH data_db") //nolint:errcheck
+
+	for _, sid := range sessionIDs {
+		// turns_ft
+		if _, err := d.Exec(`
+			INSERT INTO turns_ft (id, session_id, turn_index, role, content, ts)
+			SELECT id, session_id, turn_index, role, content, CAST(ts AS VARCHAR)
+			FROM data_db.turns WHERE session_id = $1
+		`, sid); err != nil {
+			return fmt.Errorf("incremental turns_ft: %w", err)
+		}
+
+		// tool_calls_index
+		if _, err := d.Exec(`
+			INSERT INTO tool_calls_index (id, session_id, call_order, tool, path, cmd_prefix)
+			SELECT id, session_id, call_order, tool, path, cmd_prefix
+			FROM data_db.tool_calls WHERE session_id = $1
+		`, sid); err != nil {
+			return fmt.Errorf("incremental tool_calls_index: %w", err)
+		}
+
+		// session_facets
+		if _, err := d.Exec(`
+			INSERT INTO session_facets (
+				session_id, user_email, git_branch, actor_type, agent_id,
+				captured_at, turn_count, tool_call_count, file_count,
+				checkpoint_id, git_sha
+			)
+			SELECT
+				s.id, s.user_email,
+				COALESCE(c.git_branch, s.branch),
+				s.actor_type, s.agent_id, s.captured_at,
+				(SELECT count(*) FROM data_db.turns t WHERE t.session_id = s.id),
+				(SELECT count(*) FROM data_db.tool_calls tc WHERE tc.session_id = s.id),
+				COALESCE(fc.cnt, 0),
+				c.id, c.git_sha
+			FROM data_db.sessions s
+			LEFT JOIN data_db.checkpoint_sessions cs ON cs.session_id = s.id
+			LEFT JOIN data_db.checkpoints c ON c.id = cs.checkpoint_id
+			LEFT JOIN (
+				SELECT cs2.session_id, count(DISTINCT ft.file_path) AS cnt
+				FROM data_db.checkpoint_sessions cs2
+				JOIN data_db.files_touched ft ON ft.checkpoint_id = cs2.checkpoint_id
+				WHERE cs2.session_id = $1
+				GROUP BY cs2.session_id
+			) fc ON fc.session_id = s.id
+			WHERE s.id = $1
+		`, sid); err != nil {
+			return fmt.Errorf("incremental session_facets: %w", err)
+		}
+	}
+
+	// files_index for the new checkpoint
+	if _, err := d.Exec(`
+		INSERT INTO files_index (checkpoint_id, session_id, file_path, change_type)
+		SELECT ft.checkpoint_id, cs.session_id, ft.file_path, ft.change_type
+		FROM data_db.files_touched ft
+		JOIN data_db.checkpoint_sessions cs ON cs.checkpoint_id = ft.checkpoint_id
+		WHERE ft.checkpoint_id = $1
+	`, checkpointID); err != nil {
+		return fmt.Errorf("incremental files_index: %w", err)
+	}
+
+	return nil
+}
+
+// QuerySessionContentByIDs returns session_id → concatenated turn content for specific sessions.
+func QuerySessionContentByIDs(d *sql.DB, sessionIDs []string) (map[string]string, error) {
+	result := make(map[string]string, len(sessionIDs))
+	for _, sid := range sessionIDs {
+		var content string
+		err := d.QueryRow(`
+			SELECT string_agg(content, ' ' ORDER BY turn_index)
+			FROM turns_ft WHERE session_id = $1
+		`, sid).Scan(&content)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("query session content for %s: %w", sid, err)
+		}
+		if content != "" {
+			result[sid] = content
+		}
+	}
+	return result, nil
+}
+
 // QuerySessionContent returns session_id → concatenated turn content for LSA.
 func QuerySessionContent(d *sql.DB) (map[string]string, error) {
 	rows, err := d.Query(`

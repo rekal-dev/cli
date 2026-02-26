@@ -19,7 +19,7 @@ See [preconditions.md](../preconditions.md): git repo, init done. If the index i
 1. **Run shared preconditions** — Git root, init done.
 2. **Open index DB** — Load FTS extension. If index is empty (`last_indexed_at` not set), run a full index rebuild automatically.
 3. **Dispatch search mode:**
-   - **With query text** → Hybrid search (BM25 + LSA combined scoring).
+   - **With query text** → Hybrid search (BM25 + LSA + Nomic combined scoring).
    - **Without query text** → Filter-only search (latest sessions matching filters).
 4. **Output** — Structured JSON to stdout. Fields: `results`, `query`, `filters`, `mode`, `total`.
 
@@ -31,10 +31,11 @@ See [preconditions.md](../preconditions.md): git repo, init done. If the index i
 
 1. **BM25 search** — Full-text search on `turns_ft.content`. Returns up to 200 candidate hits scored by BM25.
 2. **LSA search** — Rebuild LSA model from session content, project query into embedding space, compute cosine similarity against stored session embeddings. Non-fatal if LSA fails.
-3. **Group by session** — Pick the best-scoring turn per session.
-4. **Normalize and combine** — Normalize BM25 and LSA scores to [0,1], combine with weights (BM25: 0.4, LSA: 0.6).
-5. **Apply filters** — Actor, author, commit, file regex — all ANDed.
-6. **Return top N** — Sorted by hybrid score descending.
+3. **Nomic search** — Deep semantic similarity using nomic-embed-text embeddings. Loads stored nomic vectors from index DB, embeds query with "search_query: " prefix, computes cosine similarity. Non-fatal if nomic is unavailable (unsupported platform) or fails.
+4. **Group by session** — Pick the best-scoring turn per session.
+5. **Normalize and combine** — Normalize all scores to [0,1]. When nomic is available: 3-way scoring (BM25: 0.3, LSA: 0.2, Nomic: 0.5). When nomic is unavailable: 2-way fallback (BM25: 0.4, LSA: 0.6).
+6. **Apply filters** — Actor, author, commit, file regex — all ANDed.
+7. **Return top N** — Sorted by hybrid score descending.
 
 ### Filter search (no query)
 

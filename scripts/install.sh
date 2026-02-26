@@ -75,6 +75,22 @@ verify_checksum() {
 main() {
     command -v curl &>/dev/null || error "curl is required. Install curl and try again."
 
+    # Parse arguments.
+    local target_dir="" version_arg=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --target)
+                [[ -z "${2:-}" ]] && error "--target requires a directory path"
+                target_dir="$2"; shift 2 ;;
+            --target=*)
+                target_dir="${1#--target=}"; shift ;;
+            *)
+                version_arg="$1"; shift ;;
+        esac
+    done
+
+    local install_dir="${target_dir:-${DEFAULT_INSTALL_DIR}}"
+
     info "Installing Rekal CLI..."
     local os arch version
     os=$(detect_os)
@@ -82,7 +98,7 @@ main() {
     info "Detected platform: ${os}/${arch}"
 
     info "Resolving version..."
-    version=$(get_version "${1:-}")
+    version=$(get_version "${version_arg:-}")
     info "Version: ${version}"
 
     local archive_name="rekal_${os}_${arch}.tar.gz"
@@ -110,7 +126,6 @@ main() {
     info "Extracting..."
     tar -xzf "${tmp_dir}/${archive_name}" -C "$tmp_dir"
 
-    local install_dir="${DEFAULT_INSTALL_DIR}"
     local binary_path="${tmp_dir}/rekal"
     local install_path="${install_dir}/rekal"
 

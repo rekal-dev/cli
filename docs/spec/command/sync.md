@@ -27,6 +27,7 @@ Captures local work, pushes it, fetches remote branches, and rebuilds the search
    - For each remote branch: decode wire format (`rekal.body` + `dict.bin`), insert into `turns_ft`, `session_facets`, `files_index` — **skip tool calls** for remote data
    - Create FTS index (BM25)
    - LSA embedding pass
+   - Nomic deep semantic embedding pass (non-fatal, skipped on unsupported platforms)
    - Write index state
 6. **Print summary** — `rekal: synced — N local sessions, N remote sessions from M team member(s)`.
 
