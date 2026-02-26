@@ -109,6 +109,12 @@ imported into the local data DB automatically.`,
 				return fmt.Errorf("install skill: %w", err)
 			}
 
+			// Gitignore .claude/ or just .claude/skills/ depending on whether
+			// the user already has a .claude directory (settings, CLAUDE.md, etc.).
+			if err := ensureClaudeGitignore(gitRoot); err != nil {
+				return fmt.Errorf("update .gitignore for .claude: %w", err)
+			}
+
 			// Run initial checkpoint to capture any existing sessions.
 			if err := doCheckpoint(gitRoot, cmd.ErrOrStderr()); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rekal: warning: initial checkpoint failed: %v\n", err)
@@ -123,8 +129,12 @@ imported into the local data DB automatically.`,
 }
 
 func ensureGitignore(gitRoot string) error {
+	return appendGitignoreEntry(gitRoot, ".rekal/")
+}
+
+// appendGitignoreEntry adds entry to .gitignore if not already present.
+func appendGitignoreEntry(gitRoot, entry string) error {
 	gitignorePath := filepath.Join(gitRoot, ".gitignore")
-	entry := ".rekal/"
 
 	data, err := os.ReadFile(gitignorePath)
 	if err != nil && !os.IsNotExist(err) {
@@ -138,14 +148,12 @@ func ensureGitignore(gitRoot string) error {
 		}
 	}
 
-	// Append .rekal/ to .gitignore.
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	// Add newline before entry if file doesn't end with one.
 	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
 		if _, err := f.WriteString("\n"); err != nil {
 			return err
@@ -290,4 +298,28 @@ func installSkill(gitRoot string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skill.RekalSkill), 0o644)
+}
+
+// ensureClaudeGitignore adds the appropriate .claude gitignore entry.
+// If .claude/ already exists (user has settings, CLAUDE.md, etc.), only ignore
+// .claude/skills/ so the skill doesn't get committed. Otherwise ignore the
+// entire .claude/ directory.
+func ensureClaudeGitignore(gitRoot string) error {
+	claudeDir := filepath.Join(gitRoot, ".claude")
+
+	// Determine what to ignore: if .claude/ existed before we created skills/,
+	// the user has their own .claude content — only ignore the skills subfolder.
+	// We check for entries other than "skills" in .claude/.
+	entry := ".claude/"
+	entries, err := os.ReadDir(claudeDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.Name() != "skills" {
+				entry = ".claude/skills/"
+				break
+			}
+		}
+	}
+
+	return appendGitignoreEntry(gitRoot, entry)
 }

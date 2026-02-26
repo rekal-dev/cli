@@ -27,7 +27,9 @@
 8. **Create orphan branch** — `rekal/<email>` with empty `rekal.body` and `dict.bin`. If the branch exists on the remote, fetch it. If it exists locally, leave it.
 9. **Import existing data** — If the orphan branch has data (body > 9 bytes), import sessions and checkpoints into data DB.
 10. **Install Claude Code skill** — Write `.claude/skills/rekal/SKILL.md` for agent integration.
-11. **Print** — `Rekal initialized.`
+11. **Gitignore `.claude`** — If `.claude/` already existed (user has settings, CLAUDE.md, etc.), only ignore `.claude/skills/`. Otherwise ignore the entire `.claude/` directory.
+12. **Initial checkpoint** — Capture any existing sessions.
+13. **Print** — `Rekal initialized.`
 
 ---
 
