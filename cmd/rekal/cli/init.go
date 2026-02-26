@@ -157,16 +157,29 @@ func installHooks(gitRoot string) error {
 	}
 
 	postCommit := filepath.Join(hooksDir, "post-commit")
-	if err := writeHook(postCommit, "#!/bin/sh\n"+rekalHookMarker+"\nrekal checkpoint\n"); err != nil {
+	if err := writeHook(postCommit, hookScript("checkpoint")); err != nil {
 		return fmt.Errorf("post-commit hook: %w", err)
 	}
 
 	prePush := filepath.Join(hooksDir, "pre-push")
-	if err := writeHook(prePush, "#!/bin/sh\n"+rekalHookMarker+"\nrekal push\n"); err != nil {
+	if err := writeHook(prePush, hookScript("push")); err != nil {
 		return fmt.Errorf("pre-push hook: %w", err)
 	}
 
 	return nil
+}
+
+// hookScript generates a shell hook that resolves the rekal binary at runtime.
+// Checks PATH first, then falls back to ~/.local/bin/rekal (the default install location).
+func hookScript(subcommand string) string {
+	return `#!/bin/sh
+` + rekalHookMarker + `
+if command -v rekal >/dev/null 2>&1; then
+  rekal ` + subcommand + `
+elif [ -x "$HOME/.local/bin/rekal" ]; then
+  "$HOME/.local/bin/rekal" ` + subcommand + `
+fi
+`
 }
 
 func writeHook(path, content string) error {
