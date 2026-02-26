@@ -35,7 +35,7 @@ func loadEmbeddedFTS(d *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("decompress fts extension: %w", err)
 		}
-		defer gz.Close()
+		defer gz.Close() //nolint:errcheck
 
 		data, err := io.ReadAll(gz)
 		if err != nil {
