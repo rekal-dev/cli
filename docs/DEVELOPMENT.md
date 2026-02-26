@@ -54,6 +54,11 @@ All commands below assume you are in the repo root unless noted.
 ### 1.3 One-time setup
 
 ```bash
+# Install Git LFS (required — the nomic model is stored via LFS)
+# macOS: brew install git-lfs
+# Linux: apt install git-lfs
+git lfs install
+
 git clone https://github.com/rekal-dev/cli.git rekal-cli
 cd rekal-cli
 mise install                    # Install Go and golangci-lint per mise.toml

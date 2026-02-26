@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: jdx/mise-action@v3
       - name: Tests
         run: mise run test:ci
@@ -36,8 +38,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          lfs: true
 
       - uses: jdx/mise-action@v3
+
+      - name: Build llama.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp .deps/llama.cpp
+          cd .deps/llama.cpp
+          CMAKE_ARGS="-DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release"
+          if [ "${{ matrix.goos }}" = "darwin" ]; then
+            CMAKE_ARGS="$CMAKE_ARGS -DLLAMA_METAL=ON"
+          fi
+          cmake -B build $CMAKE_ARGS
+          cmake --build build --config Release -j$(nproc || sysctl -n hw.ncpu) --target llama --target ggml --target common
 
       - name: Build binary
         env:
