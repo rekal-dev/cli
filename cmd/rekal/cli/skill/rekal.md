@@ -37,19 +37,24 @@ rekal --author alice@co.com "billing"   # filter by author
 rekal -n 5 "error handling"            # limit results
 ```
 
-Output is scored JSON with session IDs, snippets, and metadata.
+Output is scored JSON. Each result includes:
+- `session_id` — use with `rekal query --session <id>` to drill down
+- `snippet` — the matching text from the best-matching turn
+- `snippet_turn_index` — the turn index of the snippet (use as `--offset` for drill-down)
+- `snippet_role` — whether the snippet is from a `human` or `assistant` turn
+- `score`, `actor`, `author`, `branch`, `files` — metadata for filtering
 
 ### 2. Drill down — progressive context loading
 
 Always start small to minimize token cost, then load more only when needed.
 
 ```bash
-# Step 1: Start with human turns only — understand the intent cheaply
-rekal query --session 01JNQX... --role human
+# Step 1: Use snippet_turn_index from search results to fetch a small window
+# around the most relevant turn (e.g. if snippet_turn_index was 12)
+rekal query --session 01JNQX... --offset 10 --limit 5
 
-# Step 2: If you need more detail, fetch a small page around a relevant turn
-# (search results include turn indices — use them as offset)
-rekal query --session 01JNQX... --offset 5 --limit 5
+# Step 2: If you need broader context, fetch human turns to understand intent
+rekal query --session 01JNQX... --role human
 
 # Step 3: Only fetch full output when you actually need tool calls and files
 rekal query --session 01JNQX... --full
@@ -57,8 +62,8 @@ rekal query --session 01JNQX... --full
 
 Output includes `total_turns`, `offset`, `limit`, and `has_more` for navigation.
 
-Do NOT load all turns or use `--full` by default. The search results from step 1 give you
-enough context to decide what slice to load next.
+Do NOT load all turns or use `--full` by default. Use `snippet_turn_index` from
+search results to jump directly to the relevant part of the conversation.
 
 ### 3. Raw SQL — for edge cases
 
@@ -88,6 +93,7 @@ the full DB schemas (`rekal query --help`).
 
 - Search before modifying files that have prior session history
 - Start with `rekal "keyword"` — only drop to raw SQL when the search workflow doesn't cover your need
+- Use `snippet_turn_index` to jump to the relevant part of a session — don't load everything
 - Human turns contain the intent; assistant turns contain the reasoning
 - `actor_type` distinguishes human-initiated sessions from automated agent sessions
 - Join `turns` with `tool_calls` via `session_id` to get context around file changes
