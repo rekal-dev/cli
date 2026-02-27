@@ -18,10 +18,10 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' DIM='' BOLD='' NC=''
 fi
 
-info()    { printf '  %b%s%b %s\n' "${BLUE}" "▸" "${NC}" "$1"; }
-success() { printf '  %b%s%b %s\n' "${GREEN}" "✓" "${NC}" "$1"; }
-warn()    { printf '  %b%s%b %s\n' "${YELLOW}" "!" "${NC}" "$1"; }
-error()   { printf '  %b%s%b %s\n' "${RED}" "✗" "${NC}" "$1" >&2; exit 1; }
+info()    { printf '  %b%s%b %b\n' "${BLUE}" "▸" "${NC}" "$1"; }
+success() { printf '  %b%s%b %b\n' "${GREEN}" "✓" "${NC}" "$1"; }
+warn()    { printf '  %b%s%b %b\n' "${YELLOW}" "!" "${NC}" "$1"; }
+error()   { printf '  %b%s%b %b\n' "${RED}" "✗" "${NC}" "$1" >&2; exit 1; }
 
 banner() {
     echo ""
@@ -188,11 +188,46 @@ main() {
     fi
 
     if [[ -z "$path_binary" ]]; then
-        echo ""
-        echo -e "  ${DIM}Add to PATH to run rekal from anywhere:${NC}"
-        echo -e "    ${BOLD}export PATH=\"${install_dir}:\$PATH\"${NC}"
-        echo ""
-        echo -e "  ${DIM}Then run:${NC} ${BOLD}rekal version${NC}"
+        # Detect shell profile
+        local shell_profile=""
+        case "$(basename "${SHELL:-bash}")" in
+            zsh)  shell_profile="$HOME/.zshrc" ;;
+            bash)
+                if [[ -f "$HOME/.bash_profile" ]]; then
+                    shell_profile="$HOME/.bash_profile"
+                else
+                    shell_profile="$HOME/.bashrc"
+                fi ;;
+            fish) shell_profile="$HOME/.config/fish/config.fish" ;;
+        esac
+
+        local export_line="export PATH=\"${install_dir}:\$PATH\""
+
+        if [[ -t 0 && -n "$shell_profile" ]]; then
+            echo ""
+            printf '  %b rekal is not on your PATH. Add it to %b%s%b? [Y/n] ' \
+                "${DIM}▸${NC}" "${BOLD}" "$shell_profile" "${NC}"
+            local reply
+            read -r reply </dev/tty
+            case "$reply" in
+                [nN]*)
+                    echo ""
+                    echo -e "  ${DIM}To add manually:${NC}"
+                    echo -e "    ${BOLD}${export_line}${NC}"
+                    ;;
+                *)
+                    echo "" >> "$shell_profile"
+                    echo "# rekal" >> "$shell_profile"
+                    echo "$export_line" >> "$shell_profile"
+                    success "Added to ${BOLD}${shell_profile}${NC}"
+                    info "Run ${BOLD}source ${shell_profile}${NC} or open a new terminal."
+                    ;;
+            esac
+        else
+            echo ""
+            echo -e "  ${DIM}Add to PATH to run rekal from anywhere:${NC}"
+            echo -e "    ${BOLD}${export_line}${NC}"
+        fi
     fi
 
     echo ""
