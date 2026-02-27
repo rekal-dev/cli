@@ -224,9 +224,18 @@ main() {
                     ;;
             esac
         else
-            echo ""
-            echo -e "  ${DIM}Add to PATH to run rekal from anywhere:${NC}"
-            echo -e "    ${BOLD}${export_line}${NC}"
+            if [[ -n "$shell_profile" ]]; then
+                echo "" >> "$shell_profile"
+                echo "# rekal" >> "$shell_profile"
+                echo "$export_line" >> "$shell_profile"
+                echo ""
+                success "Added to ${BOLD}${shell_profile}${NC}"
+                info "Run ${BOLD}source ${shell_profile}${NC} or open a new terminal."
+            else
+                echo ""
+                echo -e "  ${DIM}Add to PATH to run rekal from anywhere:${NC}"
+                echo -e "    ${BOLD}${export_line}${NC}"
+            fi
         fi
     fi
 
