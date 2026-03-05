@@ -14,6 +14,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/scrub"
 	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/session"
 	"github.com/spf13/cobra"
 )
@@ -137,6 +138,9 @@ func doCheckpoint(gitRoot string, w io.Writer) error {
 		if err != nil {
 			continue
 		}
+
+		// Redact secrets and anonymize paths before any DB insertion.
+		scrub.Scrub(payload)
 
 		if len(payload.Turns) == 0 && len(payload.ToolCalls) == 0 {
 			continue
