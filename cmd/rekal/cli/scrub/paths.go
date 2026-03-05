@@ -48,10 +48,6 @@ func newAnonymizer(username string) *pathAnonymizer {
 	}
 }
 
-// projectRelativeDirs are directories under the home folder where we strip
-// the full path and keep only the project-relative portion.
-var projectRelativeDirs = []string{"Documents", "Downloads", "Desktop", "Projects", "projects", "src", "repos", "code", "dev", "workspace"}
-
 // AnonymizePath replaces the username in a single file path with the hashed form.
 func AnonymizePath(path string) string {
 	if defaultAnonymizer == nil {
