@@ -63,26 +63,26 @@ var patterns = []secretPattern{
 
 // allowedEmails are email addresses that should not be redacted.
 var allowedEmails = map[string]bool{
-	"noreply@anthropic.com":  true,
-	"noreply@github.com":     true,
-	"noreply@example.com":    true,
-	"user@example.com":       true,
-	"test@example.com":       true,
-	"example@example.com":    true,
-	"git@github.com":         true,
-	"actions@github.com":     true,
-	"dependabot@github.com":  true,
-	"bot@renovateapp.com":    true,
-	"support@github.com":     true,
+	"noreply@anthropic.com": true,
+	"noreply@github.com":    true,
+	"noreply@example.com":   true,
+	"user@example.com":      true,
+	"test@example.com":      true,
+	"example@example.com":   true,
+	"git@github.com":        true,
+	"actions@github.com":    true,
+	"dependabot@github.com": true,
+	"bot@renovateapp.com":   true,
+	"support@github.com":    true,
 }
 
 // allowedEmailDomains are domains whose emails should not be redacted.
 var allowedEmailDomains = map[string]bool{
-	"example.com":     true,
-	"example.org":     true,
-	"example.net":     true,
-	"test.com":        true,
-	"localhost":        true,
+	"example.com": true,
+	"example.org": true,
+	"example.net": true,
+	"test.com":    true,
+	"localhost":   true,
 }
 
 // privateIPPrefixes are IP prefixes that should not be redacted.
