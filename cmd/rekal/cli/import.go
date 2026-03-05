@@ -89,7 +89,7 @@ func importBranch(gitRoot string, dataDB *sql.DB, branch string) (int, error) {
 			sessionHash := "wire:" + sessionID
 			capturedAt := sf.CapturedAt.UTC().Format(time.RFC3339)
 
-			if err := db.InsertSession(dataDB, sessionID, "", sessionHash, actorType, agentID, email, branch, capturedAt); err != nil {
+			if err := db.InsertSession(dataDB, sessionID, "", sessionHash, actorType, agentID, email, branch, capturedAt, ""); err != nil {
 				return imported, fmt.Errorf("insert session: %w", err)
 			}
 

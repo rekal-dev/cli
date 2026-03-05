@@ -5,8 +5,25 @@ import "database/sql"
 // InitDataSchema creates the data DB tables if they do not exist.
 // Data DB is the source of truth — append-only, never rebuilt.
 func InitDataSchema(d *sql.DB) error {
-	_, err := d.Exec(dataDDL)
-	return err
+	if _, err := d.Exec(dataDDL); err != nil {
+		return err
+	}
+	return MigrateDataSchema(d)
+}
+
+// MigrateDataSchema applies forward-only migrations to an existing data DB.
+// Safe to call multiple times — each migration checks before applying.
+func MigrateDataSchema(d *sql.DB) error {
+	// Migration: add source column if missing (existing DBs pre-multi-agent).
+	var count int
+	err := d.QueryRow(`SELECT count(*) FROM information_schema.columns
+		WHERE table_name = 'sessions' AND column_name = 'source'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := d.Exec(`ALTER TABLE sessions ADD COLUMN source VARCHAR NOT NULL DEFAULT 'claude'`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // InitIndexSchema creates the index DB tables if they do not exist.
@@ -28,7 +45,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	actor_type        VARCHAR NOT NULL DEFAULT 'human',
 	agent_id          VARCHAR,
 	user_email        VARCHAR,
-	branch            VARCHAR
+	branch            VARCHAR,
+	source            VARCHAR NOT NULL DEFAULT 'claude'
 );
 
 CREATE TABLE IF NOT EXISTS turns (

@@ -57,29 +57,17 @@ func runCheckpoint(cmd *cobra.Command, gitRoot string) error {
 // doCheckpoint captures the current session after a commit.
 // Extracted so sync can call it without a cobra.Command.
 func doCheckpoint(gitRoot string, w io.Writer) error {
-	// Find session directory for this repo.
-	sessionDir := session.FindSessionDir(gitRoot)
-	if sessionDir == "" {
-		return nil
-	}
-
-	files, err := session.FindSessionFiles(sessionDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("find session files: %w", err)
-	}
-	if len(files) == 0 {
-		return nil
-	}
-
 	// Open data DB.
 	dataDB, err := db.OpenData(gitRoot)
 	if err != nil {
 		return fmt.Errorf("open data DB: %w", err)
 	}
 	defer dataDB.Close()
+
+	// Run forward-only migrations for existing DBs.
+	if err := db.MigrateDataSchema(dataDB); err != nil {
+		return fmt.Errorf("migrate data schema: %w", err)
+	}
 
 	// Verify DB is healthy by running a simple query.
 	if _, err := dataDB.Exec("SELECT 1"); err != nil {
@@ -97,107 +85,144 @@ func doCheckpoint(gitRoot string, w io.Writer) error {
 	// Collect unique relative file paths from file-modifying tool_calls across all sessions.
 	toolCallPaths := make(map[string]struct{})
 
-	for _, f := range files {
-		// Incremental: check checkpoint_state to skip unchanged files.
-		info, statErr := os.Stat(f)
-		if statErr != nil {
-			continue
-		}
-
-		data, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		if len(data) == 0 {
-			continue
-		}
-
-		hash := sha256Hex(data)
-
-		// Check cached state — skip if size + hash match.
-		cachedSize, cachedHash, found, csErr := db.GetCheckpointState(dataDB, f)
-		if csErr != nil {
-			return fmt.Errorf("check checkpoint state: %w", csErr)
-		}
-		if found && cachedSize == info.Size() && cachedHash == hash {
-			continue
-		}
-
-		exists, err := db.SessionExistsByHash(dataDB, hash)
-		if err != nil {
-			return fmt.Errorf("dedup check: %w", err)
-		}
-		if exists {
-			// File changed but session already exists (re-parse produced same hash).
-			// Update state cache and skip.
-			_ = db.UpsertCheckpointState(dataDB, f, info.Size(), hash)
-			continue
-		}
-
-		payload, err := session.ParseTranscript(data)
+	// Iterate all adapters to discover sessions from all known agents.
+	for _, adapter := range session.Adapters {
+		refs, err := adapter.Discover(gitRoot)
 		if err != nil {
 			continue
 		}
 
-		// Redact secrets and anonymize paths before any DB insertion.
-		scrub.Scrub(payload)
-
-		if len(payload.Turns) == 0 && len(payload.ToolCalls) == 0 {
-			continue
-		}
-
-		sessionID := newID()
-		capturedAt := time.Now().UTC()
-
-		// Insert session into DuckDB.
-		if err := db.InsertSession(
-			dataDB, sessionID, "", hash,
-			payload.ActorType, payload.AgentID, email, payload.Branch, capturedAt.Format(time.RFC3339),
-		); err != nil {
-			return fmt.Errorf("insert session: %w", err)
-		}
-
-		// Insert turns into DuckDB.
-		for i, t := range payload.Turns {
-			ts := ""
-			if !t.Timestamp.IsZero() {
-				ts = t.Timestamp.UTC().Format(time.RFC3339)
+		for _, ref := range refs {
+			// Determine cache key for deduplication.
+			cacheKey := ref.Path
+			if cacheKey == "" {
+				cacheKey = adapter.Name() + ":" + ref.DBID
 			}
-			if err := db.InsertTurn(dataDB, newID(), sessionID, i, t.Role, t.Content, ts); err != nil {
-				return fmt.Errorf("insert turn: %w", err)
-			}
-		}
 
-		// Insert tool calls into DuckDB.
-		for i, tc := range payload.ToolCalls {
-			if err := db.InsertToolCall(dataDB, newID(), sessionID, i, tc.Tool, tc.Path, tc.CmdPrefix); err != nil {
-				return fmt.Errorf("insert tool_call: %w", err)
-			}
-		}
+			// For file-based refs, check size+hash cache.
+			var data []byte
+			var hash string
+			if ref.Path != "" {
+				info, statErr := os.Stat(ref.Path)
+				if statErr != nil {
+					continue
+				}
 
-		// Collect file-modifying tool_call paths for files_touched supplementation.
-		for _, tc := range payload.ToolCalls {
-			if tc.Path == "" {
+				fileData, err := os.ReadFile(ref.Path)
+				if err != nil || len(fileData) == 0 {
+					continue
+				}
+				data = fileData
+				hash = sha256Hex(data)
+
+				cachedSize, cachedHash, found, csErr := db.GetCheckpointState(dataDB, cacheKey)
+				if csErr != nil {
+					return fmt.Errorf("check checkpoint state: %w", csErr)
+				}
+				if found && cachedSize == info.Size() && cachedHash == hash {
+					continue
+				}
+			} else {
+				// DB-based ref — use DBID as hash seed for dedup.
+				hash = sha256Hex([]byte(cacheKey))
+
+				_, _, found, csErr := db.GetCheckpointState(dataDB, cacheKey)
+				if csErr != nil {
+					return fmt.Errorf("check checkpoint state: %w", csErr)
+				}
+				if found {
+					continue
+				}
+			}
+
+			exists, err := db.SessionExistsByHash(dataDB, hash)
+			if err != nil {
+				return fmt.Errorf("dedup check: %w", err)
+			}
+			if exists {
+				if ref.Path != "" {
+					info, _ := os.Stat(ref.Path)
+					if info != nil {
+						_ = db.UpsertCheckpointState(dataDB, cacheKey, info.Size(), hash)
+					}
+				} else {
+					_ = db.UpsertCheckpointState(dataDB, cacheKey, 0, hash)
+				}
 				continue
 			}
-			switch tc.Tool {
-			case "Write", "Edit", "NotebookEdit":
-			default:
+
+			payload, err := adapter.Parse(ref)
+			if err != nil || payload == nil {
 				continue
 			}
-			rel := strings.TrimPrefix(tc.Path, gitRoot+"/")
-			if rel == tc.Path {
-				// Path is not under gitRoot — external file, skip.
+
+			// Redact secrets and anonymize paths before any DB insertion.
+			scrub.Scrub(payload)
+
+			if len(payload.Turns) == 0 && len(payload.ToolCalls) == 0 {
 				continue
 			}
-			toolCallPaths[rel] = struct{}{}
+
+			sessionID := newID()
+			capturedAt := time.Now().UTC()
+
+			// Insert session into DuckDB.
+			if err := db.InsertSession(
+				dataDB, sessionID, "", hash,
+				payload.ActorType, payload.AgentID, email, payload.Branch, capturedAt.Format(time.RFC3339),
+				payload.Source,
+			); err != nil {
+				return fmt.Errorf("insert session: %w", err)
+			}
+
+			// Insert turns into DuckDB.
+			for i, t := range payload.Turns {
+				ts := ""
+				if !t.Timestamp.IsZero() {
+					ts = t.Timestamp.UTC().Format(time.RFC3339)
+				}
+				if err := db.InsertTurn(dataDB, newID(), sessionID, i, t.Role, t.Content, ts); err != nil {
+					return fmt.Errorf("insert turn: %w", err)
+				}
+			}
+
+			// Insert tool calls into DuckDB.
+			for i, tc := range payload.ToolCalls {
+				if err := db.InsertToolCall(dataDB, newID(), sessionID, i, tc.Tool, tc.Path, tc.CmdPrefix); err != nil {
+					return fmt.Errorf("insert tool_call: %w", err)
+				}
+			}
+
+			// Collect file-modifying tool_call paths for files_touched supplementation.
+			for _, tc := range payload.ToolCalls {
+				if tc.Path == "" {
+					continue
+				}
+				switch tc.Tool {
+				case "Write", "Edit", "NotebookEdit":
+				default:
+					continue
+				}
+				rel := strings.TrimPrefix(tc.Path, gitRoot+"/")
+				if rel == tc.Path {
+					continue
+				}
+				toolCallPaths[rel] = struct{}{}
+			}
+
+			// Update checkpoint state cache.
+			if ref.Path != "" {
+				info, _ := os.Stat(ref.Path)
+				if info != nil {
+					_ = db.UpsertCheckpointState(dataDB, cacheKey, info.Size(), hash)
+				}
+			} else {
+				_ = db.UpsertCheckpointState(dataDB, cacheKey, 0, hash)
+			}
+
+			sessionIDs = append(sessionIDs, sessionID)
+			inserted++
 		}
-
-		// Update checkpoint state cache.
-		_ = db.UpsertCheckpointState(dataDB, f, info.Size(), hash)
-
-		sessionIDs = append(sessionIDs, sessionID)
-		inserted++
 	}
 
 	if inserted == 0 {

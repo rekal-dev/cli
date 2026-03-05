@@ -288,7 +288,7 @@ func seedData(t *testing.T, env *TestEnv) {
 	defer dataDB.Close()
 
 	// Session 1: JWT auth topic.
-	if err := db.InsertSession(dataDB, "test-session-1", "", "hash1", "human", "", "alice@example.com", "feature/auth", "2026-02-25T10:00:00Z"); err != nil {
+	if err := db.InsertSession(dataDB, "test-session-1", "", "hash1", "human", "", "alice@example.com", "feature/auth", "2026-02-25T10:00:00Z", ""); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
 	if err := db.InsertTurn(dataDB, "turn-1", "test-session-1", 0, "human", "fix the JWT expiry bug in the auth middleware", "2026-02-25T10:00:00Z"); err != nil {
@@ -311,7 +311,7 @@ func seedData(t *testing.T, env *TestEnv) {
 	}
 
 	// Session 2: DB topic.
-	if err := db.InsertSession(dataDB, "test-session-2", "", "hash2", "human", "", "bob@example.com", "feature/db", "2026-02-25T11:00:00Z"); err != nil {
+	if err := db.InsertSession(dataDB, "test-session-2", "", "hash2", "human", "", "bob@example.com", "feature/db", "2026-02-25T11:00:00Z", ""); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
 	if err := db.InsertTurn(dataDB, "turn-3", "test-session-2", 0, "human", "optimize the database connection pooling", "2026-02-25T11:00:00Z"); err != nil {

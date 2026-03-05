@@ -9,9 +9,10 @@ import (
 	"time"
 )
 
-// SessionPayload is the parsed, filtered representation of a Claude Code session.
+// SessionPayload is the parsed, filtered representation of an AI agent session.
 type SessionPayload struct {
 	SessionID  string     `json:"session_id"`
+	Source     string     `json:"source"` // "claude", "codex", "gemini", "opencode"
 	Turns      []Turn     `json:"turns"`
 	ToolCalls  []ToolCall `json:"tool_calls"`
 	Branch     string     `json:"branch"`

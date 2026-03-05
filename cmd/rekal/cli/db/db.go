@@ -44,11 +44,14 @@ func SessionExistsByHash(d *sql.DB, hash string) (bool, error) {
 }
 
 // InsertSession inserts a new session row into the data DB.
-func InsertSession(d *sql.DB, id, parentSessionID, hash, actorType, agentID, userEmail, branch, capturedAt string) error {
+func InsertSession(d *sql.DB, id, parentSessionID, hash, actorType, agentID, userEmail, branch, capturedAt, source string) error {
+	if source == "" {
+		source = "claude"
+	}
 	_, err := d.Exec(
-		`INSERT INTO sessions (id, parent_session_id, session_hash, captured_at, actor_type, agent_id, user_email, branch)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		id, nullIfEmpty(parentSessionID), hash, capturedAt, actorType, agentID, userEmail, branch,
+		`INSERT INTO sessions (id, parent_session_id, session_hash, captured_at, actor_type, agent_id, user_email, branch, source)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, nullIfEmpty(parentSessionID), hash, capturedAt, actorType, agentID, userEmail, branch, source,
 	)
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)

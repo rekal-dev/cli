@@ -20,9 +20,12 @@ import "C"
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"unsafe"
 )
@@ -41,63 +44,104 @@ func Supported() bool {
 
 // Embedder wraps a loaded nomic-embed-text model.
 type Embedder struct {
-	handle   *C.nomic_embedder
-	nEmbd    int
-	tempPath string
+	handle *C.nomic_embedder
+	nEmbd  int
 }
 
-// NewEmbedder decompresses the embedded model to a temp file and loads it.
+// cachedModelPath returns the path to a cached decompressed GGUF file,
+// creating it if it doesn't exist or the content hash has changed.
+func cachedModelPath() (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("nomic: cache dir: %w", err)
+	}
+	dir := filepath.Join(cacheDir, "rekal", "nomic")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("nomic: create cache dir: %w", err)
+	}
+
+	// Hash the compressed blob to detect binary changes across versions.
+	h := sha256.Sum256(modelGZ)
+	hash := hex.EncodeToString(h[:8]) // 16-char prefix is plenty
+	cached := filepath.Join(dir, "nomic-embed-"+hash+".gguf")
+
+	if _, err := os.Stat(cached); err == nil {
+		return cached, nil // already cached
+	}
+
+	// Decompress to a temp file in the same dir, then atomic rename.
+	gz, err := gzip.NewReader(bytes.NewReader(modelGZ))
+	if err != nil {
+		return "", fmt.Errorf("nomic: decompress model: %w", err)
+	}
+	defer gz.Close() //nolint:errcheck
+
+	tmp, err := os.CreateTemp(dir, "nomic-embed-*.gguf.tmp")
+	if err != nil {
+		return "", fmt.Errorf("nomic: create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	if _, err := io.Copy(tmp, gz); err != nil {
+		tmp.Close()
+		os.Remove(tmpName) //nolint:errcheck
+		return "", fmt.Errorf("nomic: write temp model: %w", err)
+	}
+	tmp.Close()
+
+	if err := os.Rename(tmpName, cached); err != nil {
+		os.Remove(tmpName) //nolint:errcheck
+		return "", fmt.Errorf("nomic: rename cached model: %w", err)
+	}
+
+	return cached, nil
+}
+
+// NewEmbedder loads the embedded model, using a cached decompressed file when available.
 func NewEmbedder() (*Embedder, error) {
 	if !Supported() {
 		return nil, ErrNotSupported
 	}
 
-	// Decompress GGUF to temp file.
-	gz, err := gzip.NewReader(bytes.NewReader(modelGZ))
+	modelPath, err := cachedModelPath()
 	if err != nil {
-		return nil, fmt.Errorf("nomic: decompress model: %w", err)
+		return nil, err
 	}
-	defer gz.Close() //nolint:errcheck
-
-	tmp, err := os.CreateTemp("", "nomic-embed-*.gguf")
-	if err != nil {
-		return nil, fmt.Errorf("nomic: create temp file: %w", err)
-	}
-
-	if _, err := io.Copy(tmp, gz); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name()) //nolint:errcheck
-		return nil, fmt.Errorf("nomic: write temp model: %w", err)
-	}
-	tmp.Close()
 
 	threads := runtime.NumCPU()
 	if threads > 8 {
 		threads = 8
 	}
 
-	cPath := C.CString(tmp.Name())
+	cPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cPath))
 
 	handle := C.nomic_embedder_load(cPath, C.int(threads))
 	if handle == nil {
-		os.Remove(tmp.Name()) //nolint:errcheck
-		return nil, fmt.Errorf("nomic: failed to load model")
+		// Cache may be corrupt — remove and retry once.
+		os.Remove(modelPath) //nolint:errcheck
+		modelPath, err = cachedModelPath()
+		if err != nil {
+			return nil, err
+		}
+		cPath2 := C.CString(modelPath)
+		defer C.free(unsafe.Pointer(cPath2))
+		handle = C.nomic_embedder_load(cPath2, C.int(threads))
+		if handle == nil {
+			return nil, fmt.Errorf("nomic: failed to load model")
+		}
 	}
 
 	nEmbd := int(C.nomic_embedder_n_embd(handle))
 
-	return &Embedder{handle: handle, nEmbd: nEmbd, tempPath: tmp.Name()}, nil
+	return &Embedder{handle: handle, nEmbd: nEmbd}, nil
 }
 
-// Close frees the model and removes the temp file.
+// Close frees the model. The cached GGUF file is kept for future invocations.
 func (e *Embedder) Close() {
 	if e.handle != nil {
 		C.nomic_embedder_free(e.handle)
 		e.handle = nil
-	}
-	if e.tempPath != "" {
-		os.Remove(e.tempPath) //nolint:errcheck
 	}
 }
 

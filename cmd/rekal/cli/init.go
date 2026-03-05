@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,6 +120,9 @@ imported into the local data DB automatically.`,
 			if err := doCheckpoint(gitRoot, cmd.ErrOrStderr()); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rekal: warning: initial checkpoint failed: %v\n", err)
 			}
+
+			// Detect other AI agents and print integration hints.
+			printAgentHints(cmd.ErrOrStderr(), gitRoot)
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Rekal initialized.")
 			return nil
@@ -323,3 +327,69 @@ func ensureClaudeGitignore(gitRoot string) error {
 
 	return appendGitignoreEntry(gitRoot, entry)
 }
+
+// printAgentHints detects installed AI agents and prints integration hints.
+// Writes a reference instructions file to .rekal/agent-instructions.md so
+// users can copy the content into their AGENTS.md or GEMINI.md.
+func printAgentHints(w io.Writer, gitRoot string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	var agents []string
+	if _, err := os.Stat(filepath.Join(home, ".codex")); err == nil {
+		agents = append(agents, "codex")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".gemini")); err == nil {
+		agents = append(agents, "gemini")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "share", "opencode")); err == nil {
+		agents = append(agents, "opencode")
+	}
+
+	if len(agents) == 0 {
+		return
+	}
+
+	// Write reference instructions file.
+	refPath := filepath.Join(gitRoot, ".rekal", "agent-instructions.md")
+	_ = os.WriteFile(refPath, []byte(agentInstructionsContent), 0o644)
+
+	for _, agent := range agents {
+		switch agent {
+		case "codex", "opencode":
+			fmt.Fprintf(w, "rekal: %s detected — copy .rekal/agent-instructions.md into your AGENTS.md\n", agent)
+		case "gemini":
+			fmt.Fprintln(w, "rekal: gemini CLI detected — copy .rekal/agent-instructions.md into your GEMINI.md")
+		}
+	}
+}
+
+const agentInstructionsContent = `# Rekal — Session Memory
+
+This repo uses Rekal to capture AI coding sessions. Use it to understand prior
+context before modifying code.
+
+## Quick Start
+
+` + "```" + `bash
+rekal "keyword"                        # search sessions
+rekal --file src/auth/ "token refresh" # filter by file
+rekal query --session <id>             # drill into a session
+` + "```" + `
+
+## When to Use
+
+- Before modifying a file — check what prior sessions touched it
+- When you need context about why code looks the way it does
+- When working on files that were recently changed by AI agents
+
+## Workflow
+
+1. Search: ` + "`rekal \"keyword\"`" + `
+2. Drill down: ` + "`rekal query --session <id> --offset N --limit 5`" + `
+3. Full context: ` + "`rekal query --session <id> --full`" + `
+
+Run ` + "`rekal --help`" + ` for all commands.
+`
