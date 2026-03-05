@@ -68,9 +68,9 @@ func parseOpenCodeDB(dbPath, sessionID string) (*SessionPayload, error) {
 	defer db.Close()
 
 	payload := &SessionPayload{
-		SessionID: sessionID,
-		Source:    "opencode",
-		ActorType: "human",
+		SessionID:  sessionID,
+		Source:     "opencode",
+		ActorType:  "human",
 		CapturedAt: time.Now().UTC(),
 	}
 
