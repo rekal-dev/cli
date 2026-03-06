@@ -123,8 +123,7 @@ imported into the local data DB automatically.`,
 			}
 
 			// Pre-decompress nomic model so first query is fast.
-			nomicCacheDir := filepath.Join(rekalDir, "nomic")
-			if err := nomic.WarmCache(nomicCacheDir); err != nil {
+			if err := nomic.WarmCache(); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rekal: warning: nomic cache warm failed: %v\n", err)
 			}
 

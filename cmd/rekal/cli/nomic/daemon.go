@@ -89,7 +89,7 @@ func readMsg(conn net.Conn, v interface{}) error {
 // RunDaemon runs the nomic embedding daemon. It loads the model once, listens
 // on a Unix socket, and exits after idleTimeout of inactivity.
 func RunDaemon(gitRoot string) error {
-	dir, err := nomicDir(gitRoot)
+	_, err := nomicDir(gitRoot)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func RunDaemon(gitRoot string) error {
 	}
 
 	// Load model.
-	embedder, err := NewEmbedder(dir)
+	embedder, err := NewEmbedder()
 	if err != nil {
 		return fmt.Errorf("nomic daemon: load model: %w", err)
 	}

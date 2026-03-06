@@ -2,8 +2,6 @@
 
 package nomic
 
-import "path/filepath"
-
 // Client provides nomic embeddings, transparently using the daemon when
 // available or falling back to in-process embedding.
 type Client struct {
@@ -27,8 +25,7 @@ func NewClient(gitRoot string) (*Client, error) {
 	}
 
 	// No daemon running — fall back to in-process and spawn one for next time.
-	cacheDir := filepath.Join(gitRoot, ".rekal", "nomic")
-	embedder, err := NewEmbedder(cacheDir)
+	embedder, err := NewEmbedder()
 	if err != nil {
 		return nil, err
 	}

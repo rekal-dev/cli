@@ -15,7 +15,7 @@ func Supported() bool {
 }
 
 // WarmCache is a no-op on unsupported platforms.
-func WarmCache(_ string) error {
+func WarmCache() error {
 	return nil
 }
 
@@ -23,7 +23,7 @@ func WarmCache(_ string) error {
 type Embedder struct{}
 
 // NewEmbedder always returns ErrNotSupported on unsupported platforms.
-func NewEmbedder(_ string) (*Embedder, error) {
+func NewEmbedder() (*Embedder, error) {
 	return nil, ErrNotSupported
 }
 
