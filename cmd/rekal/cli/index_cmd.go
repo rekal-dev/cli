@@ -116,7 +116,7 @@ func runIndex(cmd *cobra.Command, gitRoot string) error {
 		}
 
 		// Nomic pass (non-fatal).
-		if err := buildNomicEmbeddings(indexDB, sessionContent, w); err != nil {
+		if err := buildNomicEmbeddings(indexDB, sessionContent, w, gitRoot); err != nil {
 			fmt.Fprintf(w, "warning: nomic embeddings skipped: %v\n", err)
 		}
 	}
@@ -141,19 +141,19 @@ func runIndex(cmd *cobra.Command, gitRoot string) error {
 
 // buildNomicEmbeddings generates nomic-embed-text embeddings for all sessions
 // and stores them in the index DB. Non-fatal: returns error on any failure.
-func buildNomicEmbeddings(indexDB *sql.DB, sessionContent map[string]string, w io.Writer) error {
+func buildNomicEmbeddings(indexDB *sql.DB, sessionContent map[string]string, w io.Writer, gitRoot string) error {
 	if !nomic.Supported() {
 		return nil
 	}
 
 	fmt.Fprintln(w, "building nomic deep semantic embeddings...")
-	embedder, err := nomic.NewEmbedder()
+	client, err := nomic.NewClient(gitRoot)
 	if err != nil {
 		return err
 	}
-	defer embedder.Close()
+	defer client.Close()
 
-	vectors, err := embedder.EmbedSessions(sessionContent)
+	vectors, err := client.EmbedSessions(sessionContent)
 	if err != nil {
 		return err
 	}

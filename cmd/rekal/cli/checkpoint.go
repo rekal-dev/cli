@@ -357,7 +357,7 @@ func updateIndexIncremental(gitRoot string, sessionIDs []string, checkpointID st
 		return err
 	}
 
-	if err := buildNomicEmbeddings(indexDB, sessionContent, w); err != nil {
+	if err := buildNomicEmbeddings(indexDB, sessionContent, w, gitRoot); err != nil {
 		fmt.Fprintf(w, "rekal: warning: nomic embeddings skipped: %v\n", err)
 	}
 

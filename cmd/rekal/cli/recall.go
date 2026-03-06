@@ -116,7 +116,7 @@ func runRecall(cmd *cobra.Command, gitRoot string, filters RecallFilters) error 
 
 	if filters.Query != "" {
 		mode = "hybrid"
-		results, err = hybridSearch(indexDB, filters, limit)
+		results, err = hybridSearch(indexDB, filters, limit, gitRoot)
 	} else {
 		results, err = filterSearch(indexDB, filters, limit)
 	}
@@ -145,7 +145,7 @@ func runRecall(cmd *cobra.Command, gitRoot string, filters RecallFilters) error 
 	return nil
 }
 
-func hybridSearch(indexDB *sql.DB, filters RecallFilters, limit int) ([]searchResult, error) {
+func hybridSearch(indexDB *sql.DB, filters RecallFilters, limit int, gitRoot string) ([]searchResult, error) {
 	// Step 1: BM25 search.
 	bm25Hits, err := bm25Search(indexDB, filters.Query)
 	if err != nil {
@@ -160,7 +160,7 @@ func hybridSearch(indexDB *sql.DB, filters RecallFilters, limit int) ([]searchRe
 	}
 
 	// Step 3: Nomic deep semantic search (non-fatal).
-	nomicScores, _ := nomicSearch(indexDB, filters.Query)
+	nomicScores, _ := nomicSearch(indexDB, filters.Query, gitRoot)
 
 	// Step 4: Group by session, pick best turn per session.
 	sessions := make(map[string]*sessionHit)
@@ -411,7 +411,7 @@ func lsaSearch(indexDB *sql.DB, query string) (map[string]float64, error) {
 
 // nomicSearch computes deep semantic similarity using nomic-embed-text embeddings.
 // Non-fatal: returns nil on any failure or when nomic is unavailable.
-func nomicSearch(indexDB *sql.DB, query string) (map[string]float64, error) {
+func nomicSearch(indexDB *sql.DB, query string, gitRoot string) (map[string]float64, error) {
 	if !nomic.Supported() {
 		return nil, nil
 	}
@@ -422,14 +422,14 @@ func nomicSearch(indexDB *sql.DB, query string) (map[string]float64, error) {
 		return nil, err
 	}
 
-	// Load embedder and embed the query.
-	embedder, err := nomic.NewEmbedder()
+	// Load client and embed the query.
+	client, err := nomic.NewClient(gitRoot)
 	if err != nil {
 		return nil, err
 	}
-	defer embedder.Close()
+	defer client.Close()
 
-	queryVec, err := embedder.EmbedQuery(query)
+	queryVec, err := client.EmbedQuery(query)
 	if err != nil {
 		return nil, err
 	}

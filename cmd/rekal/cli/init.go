@@ -10,6 +10,7 @@ import (
 
 	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/codec"
 	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/db"
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/nomic"
 	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/skill"
 	"github.com/spf13/cobra"
 )
@@ -119,6 +120,12 @@ imported into the local data DB automatically.`,
 			// Run initial checkpoint to capture any existing sessions.
 			if err := doCheckpoint(gitRoot, cmd.ErrOrStderr()); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rekal: warning: initial checkpoint failed: %v\n", err)
+			}
+
+			// Pre-decompress nomic model so first query is fast.
+			nomicCacheDir := filepath.Join(rekalDir, "nomic")
+			if err := nomic.WarmCache(nomicCacheDir); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "rekal: warning: nomic cache warm failed: %v\n", err)
 			}
 
 			// Detect other AI agents and print integration hints.

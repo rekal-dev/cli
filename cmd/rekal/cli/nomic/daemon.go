@@ -1,0 +1,355 @@
+package nomic
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/spf13/cobra"
+)
+
+const (
+	idleTimeout = 5 * time.Minute
+	dialTimeout = 2 * time.Second
+	startPoll   = 10 * time.Second
+)
+
+// daemonRequest is the JSON wire format for client→daemon messages.
+type daemonRequest struct {
+	Op       string            `json:"op"`                 // ping, embed_query, embed_document, embed_sessions
+	Text     string            `json:"text,omitempty"`     // for embed_query, embed_document
+	Sessions map[string]string `json:"sessions,omitempty"` // for embed_sessions
+}
+
+// daemonResponse is the JSON wire format for daemon→client messages.
+type daemonResponse struct {
+	OK      bool                 `json:"ok"`
+	Error   string               `json:"error,omitempty"`
+	Vector  []float64            `json:"vector,omitempty"`  // for embed_query, embed_document
+	Vectors map[string][]float64 `json:"vectors,omitempty"` // for embed_sessions
+}
+
+// nomicDir returns .rekal/nomic/ under the given git root, creating it if needed.
+func nomicDir(gitRoot string) (string, error) {
+	dir := filepath.Join(gitRoot, ".rekal", "nomic")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("nomic: create dir: %w", err)
+	}
+	return dir, nil
+}
+
+func socketPath(gitRoot string) string {
+	return filepath.Join(gitRoot, ".rekal", "nomic", "daemon.sock")
+}
+
+func pidPath(gitRoot string) string {
+	return filepath.Join(gitRoot, ".rekal", "nomic", "daemon.pid")
+}
+
+// writeMsg writes a length-prefixed JSON message to a connection.
+func writeMsg(conn net.Conn, v interface{}) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
+	if _, err := conn.Write(hdr[:]); err != nil {
+		return err
+	}
+	_, err = conn.Write(data)
+	return err
+}
+
+// readMsg reads a length-prefixed JSON message from a connection.
+func readMsg(conn net.Conn, v interface{}) error {
+	var hdr [4]byte
+	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		return err
+	}
+	size := binary.BigEndian.Uint32(hdr[:])
+	if size > 64*1024*1024 { // 64 MB sanity limit
+		return fmt.Errorf("nomic daemon: message too large (%d bytes)", size)
+	}
+	buf := make([]byte, size)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return err
+	}
+	return json.Unmarshal(buf, v)
+}
+
+// RunDaemon runs the nomic embedding daemon. It loads the model once, listens
+// on a Unix socket, and exits after idleTimeout of inactivity.
+func RunDaemon(gitRoot string) error {
+	dir, err := nomicDir(gitRoot)
+	if err != nil {
+		return err
+	}
+
+	sock := socketPath(gitRoot)
+	pid := pidPath(gitRoot)
+
+	// Clean up stale socket.
+	os.Remove(sock) //nolint:errcheck
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return fmt.Errorf("nomic daemon: listen: %w", err)
+	}
+	defer ln.Close()      //nolint:errcheck
+	defer os.Remove(sock) //nolint:errcheck
+	defer os.Remove(pid)  //nolint:errcheck
+
+	// Write PID file.
+	if err := os.WriteFile(pid, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		return fmt.Errorf("nomic daemon: write pid: %w", err)
+	}
+
+	// Load model.
+	embedder, err := NewEmbedder(dir)
+	if err != nil {
+		return fmt.Errorf("nomic daemon: load model: %w", err)
+	}
+	defer embedder.Close()
+
+	var mu sync.Mutex
+	idle := time.NewTimer(idleTimeout)
+	defer idle.Stop()
+
+	// Accept loop in goroutine; main goroutine watches idle timer.
+	connCh := make(chan net.Conn)
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			connCh <- c
+		}
+	}()
+
+	for {
+		select {
+		case conn := <-connCh:
+			idle.Reset(idleTimeout)
+			go handleConn(conn, embedder, &mu, idle)
+
+		case <-idle.C:
+			return nil // clean shutdown
+
+		case err := <-errCh:
+			if strings.Contains(err.Error(), "use of closed") {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+func handleConn(conn net.Conn, embedder *Embedder, mu *sync.Mutex, idle *time.Timer) {
+	defer conn.Close() //nolint:errcheck
+
+	// Handle multiple requests on the same connection.
+	for {
+		var req daemonRequest
+		if err := readMsg(conn, &req); err != nil {
+			return // connection closed or read error
+		}
+
+		idle.Reset(idleTimeout)
+
+		resp := handleRequest(req, embedder, mu)
+		if err := writeMsg(conn, resp); err != nil {
+			return
+		}
+	}
+}
+
+func handleRequest(req daemonRequest, embedder *Embedder, mu *sync.Mutex) daemonResponse {
+	switch req.Op {
+	case "ping":
+		return daemonResponse{OK: true}
+
+	case "embed_query":
+		mu.Lock()
+		vec, err := embedder.EmbedQuery(req.Text)
+		mu.Unlock()
+		if err != nil {
+			return daemonResponse{Error: err.Error()}
+		}
+		return daemonResponse{OK: true, Vector: vec}
+
+	case "embed_document":
+		mu.Lock()
+		vec, err := embedder.EmbedDocument(req.Text)
+		mu.Unlock()
+		if err != nil {
+			return daemonResponse{Error: err.Error()}
+		}
+		return daemonResponse{OK: true, Vector: vec}
+
+	case "embed_sessions":
+		mu.Lock()
+		vecs, err := embedder.EmbedSessions(req.Sessions)
+		mu.Unlock()
+		if err != nil {
+			return daemonResponse{Error: err.Error()}
+		}
+		return daemonResponse{OK: true, Vectors: vecs}
+
+	default:
+		return daemonResponse{Error: fmt.Sprintf("unknown op: %s", req.Op)}
+	}
+}
+
+// daemonClient wraps a Unix socket connection to the daemon.
+type daemonClient struct {
+	conn net.Conn
+}
+
+func (c *daemonClient) ping() error {
+	if err := writeMsg(c.conn, daemonRequest{Op: "ping"}); err != nil {
+		return err
+	}
+	var resp daemonResponse
+	if err := readMsg(c.conn, &resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("ping failed: %s", resp.Error)
+	}
+	return nil
+}
+
+// EmbedQuery sends a query embedding request to the daemon.
+func (c *daemonClient) EmbedQuery(text string) ([]float64, error) {
+	if err := writeMsg(c.conn, daemonRequest{Op: "embed_query", Text: text}); err != nil {
+		return nil, err
+	}
+	var resp daemonResponse
+	if err := readMsg(c.conn, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("nomic daemon: %s", resp.Error)
+	}
+	return resp.Vector, nil
+}
+
+// EmbedDocument sends a document embedding request to the daemon.
+func (c *daemonClient) EmbedDocument(text string) ([]float64, error) {
+	if err := writeMsg(c.conn, daemonRequest{Op: "embed_document", Text: text}); err != nil {
+		return nil, err
+	}
+	var resp daemonResponse
+	if err := readMsg(c.conn, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("nomic daemon: %s", resp.Error)
+	}
+	return resp.Vector, nil
+}
+
+// EmbedSessions sends a batch session embedding request to the daemon.
+func (c *daemonClient) EmbedSessions(sessions map[string]string) (map[string][]float64, error) {
+	if err := writeMsg(c.conn, daemonRequest{Op: "embed_sessions", Sessions: sessions}); err != nil {
+		return nil, err
+	}
+	var resp daemonResponse
+	if err := readMsg(c.conn, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("nomic daemon: %s", resp.Error)
+	}
+	return resp.Vectors, nil
+}
+
+func (c *daemonClient) Close() {
+	c.conn.Close() //nolint:errcheck
+}
+
+// ensureDaemon connects to an existing daemon or spawns a new one.
+// Returns a connected daemonClient, or an error if the daemon cannot be reached.
+func ensureDaemon(gitRoot string) (*daemonClient, error) {
+	sock := socketPath(gitRoot)
+
+	// Try connecting to existing daemon.
+	if conn, err := net.DialTimeout("unix", sock, dialTimeout); err == nil {
+		dc := &daemonClient{conn: conn}
+		if err := dc.ping(); err == nil {
+			return dc, nil
+		}
+		dc.Close()
+	}
+
+	// Stale socket/pid — clean up.
+	os.Remove(sock)             //nolint:errcheck
+	os.Remove(pidPath(gitRoot)) //nolint:errcheck
+
+	// Spawn daemon process.
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("nomic: resolve executable: %w", err)
+	}
+
+	cmd := exec.Command(exe, "_nomic-daemon", "--git-root", gitRoot)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Stdin = nil
+	// Detach from parent process group.
+	setSysProcAttr(cmd)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("nomic: start daemon: %w", err)
+	}
+	// Detach — don't wait.
+	go cmd.Wait() //nolint:errcheck
+
+	// Poll for socket readiness.
+	deadline := time.Now().Add(startPoll)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		conn, err := net.DialTimeout("unix", sock, dialTimeout)
+		if err != nil {
+			continue
+		}
+		dc := &daemonClient{conn: conn}
+		if err := dc.ping(); err == nil {
+			return dc, nil
+		}
+		dc.Close()
+	}
+
+	return nil, fmt.Errorf("nomic: daemon did not start within %v", startPoll)
+}
+
+// NewDaemonCmd returns the hidden _nomic-daemon cobra command.
+func NewDaemonCmd() *cobra.Command {
+	var gitRoot string
+
+	cmd := &cobra.Command{
+		Use:    "_nomic-daemon",
+		Hidden: true,
+		Short:  "Run the nomic embedding daemon (internal)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if gitRoot == "" {
+				return fmt.Errorf("--git-root is required")
+			}
+			return RunDaemon(gitRoot)
+		},
+	}
+	cmd.Flags().StringVar(&gitRoot, "git-root", "", "Git repository root")
+	return cmd
+}

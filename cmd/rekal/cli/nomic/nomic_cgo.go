@@ -48,14 +48,18 @@ type Embedder struct {
 	nEmbd  int
 }
 
+// WarmCache pre-decompresses the model GGUF into the given directory
+// so the first query doesn't pay decompression cost.
+func WarmCache(cacheDir string) error {
+	_, err := cachedModelPath(cacheDir)
+	return err
+}
+
 // cachedModelPath returns the path to a cached decompressed GGUF file,
 // creating it if it doesn't exist or the content hash has changed.
-func cachedModelPath() (string, error) {
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("nomic: cache dir: %w", err)
-	}
-	dir := filepath.Join(cacheDir, "rekal", "nomic")
+// cacheDir is the directory to store the cached file (e.g. .rekal/nomic/).
+func cachedModelPath(cacheDir string) (string, error) {
+	dir := cacheDir
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("nomic: create cache dir: %w", err)
 	}
@@ -97,13 +101,14 @@ func cachedModelPath() (string, error) {
 	return cached, nil
 }
 
-// NewEmbedder loads the embedded model, using a cached decompressed file when available.
-func NewEmbedder() (*Embedder, error) {
+// NewEmbedder loads the embedded model, using a cached decompressed file
+// in cacheDir. cacheDir is the directory for the cached GGUF (e.g. .rekal/nomic/).
+func NewEmbedder(cacheDir string) (*Embedder, error) {
 	if !Supported() {
 		return nil, ErrNotSupported
 	}
 
-	modelPath, err := cachedModelPath()
+	modelPath, err := cachedModelPath(cacheDir)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +125,7 @@ func NewEmbedder() (*Embedder, error) {
 	if handle == nil {
 		// Cache may be corrupt — remove and retry once.
 		os.Remove(modelPath) //nolint:errcheck
-		modelPath, err = cachedModelPath()
+		modelPath, err = cachedModelPath(cacheDir)
 		if err != nil {
 			return nil, err
 		}

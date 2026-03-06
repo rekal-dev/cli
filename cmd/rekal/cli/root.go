@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/nomic"
 	"github.com/rekal-dev/rekal-cli/cmd/rekal/cli/versioncheck"
 	"github.com/spf13/cobra"
 )
@@ -123,6 +124,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(initCmd, cleanCmd, versionCmd)
 	cmd.AddCommand(checkpointCmd, pushCmd, syncCmd, logCmd)
 	cmd.AddCommand(queryCmd, indexCmd)
+	cmd.AddCommand(nomic.NewDaemonCmd())
 
 	return cmd
 }
