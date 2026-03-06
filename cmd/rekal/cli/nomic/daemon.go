@@ -20,7 +20,6 @@ import (
 const (
 	idleTimeout = 5 * time.Minute
 	dialTimeout = 2 * time.Second
-	startPoll   = 10 * time.Second
 )
 
 // daemonRequest is the JSON wire format for client→daemon messages.
@@ -281,73 +280,55 @@ func (c *daemonClient) Close() {
 	c.conn.Close() //nolint:errcheck
 }
 
-// ensureDaemon connects to an existing daemon or spawns a new one.
-// Returns a connected daemonClient, or an error if the daemon cannot be reached.
-func ensureDaemon(gitRoot string) (*daemonClient, error) {
+// connectDaemon tries to connect to a running daemon.
+// Returns a connected daemonClient, or an error if no daemon is reachable.
+// Does NOT spawn a new daemon — use spawnDaemon for that.
+func connectDaemon(gitRoot string) (*daemonClient, error) {
 	sock := socketPath(gitRoot)
 
-	// Try connecting to existing daemon.
-	if conn, err := net.DialTimeout("unix", sock, dialTimeout); err == nil {
-		dc := &daemonClient{conn: conn}
-		if err := dc.ping(); err == nil {
-			return dc, nil
-		}
-		dc.Close()
+	conn, err := net.DialTimeout("unix", sock, dialTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("nomic: no daemon running")
 	}
+	dc := &daemonClient{conn: conn}
+	if err := dc.ping(); err != nil {
+		dc.Close()
+		return nil, fmt.Errorf("nomic: daemon not responding: %w", err)
+	}
+	return dc, nil
+}
 
-	// Stale socket/pid — clean up.
+// spawnDaemon launches a daemon process in the background.
+// It does not wait for the daemon to become ready — callers should
+// fall back to in-process embedding and benefit from the daemon on
+// subsequent invocations.
+func spawnDaemon(gitRoot string) {
+	sock := socketPath(gitRoot)
+
+	// Clean up stale socket/pid.
 	os.Remove(sock)             //nolint:errcheck
 	os.Remove(pidPath(gitRoot)) //nolint:errcheck
 
-	// Spawn daemon process.
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("nomic: resolve executable: %w", err)
+		return
+	}
+
+	// Don't spawn from test binaries — they can't serve the daemon command.
+	if strings.HasSuffix(exe, ".test") || strings.Contains(exe, "/_test/") {
+		return
 	}
 
 	cmd := exec.Command(exe, "_nomic-daemon", "--git-root", gitRoot)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
-	// Detach from parent process group.
 	setSysProcAttr(cmd)
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("nomic: start daemon: %w", err)
+		return
 	}
-
-	// Wait in background so we can detect early exit.
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
-
-	// Poll for socket readiness.
-	deadline := time.Now().Add(startPoll)
-	for time.Now().Before(deadline) {
-		// Check if daemon already exited (failed to start).
-		select {
-		case err := <-waitCh:
-			if err != nil {
-				return nil, fmt.Errorf("nomic: daemon exited: %w", err)
-			}
-			return nil, fmt.Errorf("nomic: daemon exited unexpectedly")
-		default:
-		}
-
-		time.Sleep(100 * time.Millisecond)
-		conn, err := net.DialTimeout("unix", sock, dialTimeout)
-		if err != nil {
-			continue
-		}
-		dc := &daemonClient{conn: conn}
-		if err := dc.ping(); err == nil {
-			return dc, nil
-		}
-		dc.Close()
-	}
-
-	// Timed out — kill the daemon process to avoid leaked goroutines.
-	cmd.Process.Kill() //nolint:errcheck
-	<-waitCh
-	return nil, fmt.Errorf("nomic: daemon did not start within %v", startPoll)
+	// Fully detach — don't wait on the child.
+	go cmd.Wait() //nolint:errcheck
 }
 
 // NewDaemonCmd returns the hidden _nomic-daemon cobra command.

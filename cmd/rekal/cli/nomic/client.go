@@ -12,25 +12,27 @@ type Client struct {
 }
 
 // NewClient creates a Client that tries the daemon first for fast embedding.
-// If the daemon is unavailable, it falls back to loading the model in-process.
+// If no daemon is running, it falls back to loading the model in-process and
+// spawns a daemon in the background for future invocations.
 // gitRoot is the git repository root (used to locate .rekal/nomic/).
 func NewClient(gitRoot string) (*Client, error) {
 	if !Supported() {
 		return nil, ErrNotSupported
 	}
 
-	// Try daemon first.
-	dc, err := ensureDaemon(gitRoot)
+	// Try connecting to a running daemon.
+	dc, err := connectDaemon(gitRoot)
 	if err == nil {
 		return &Client{daemon: dc}, nil
 	}
 
-	// Fall back to in-process.
+	// No daemon running — fall back to in-process and spawn one for next time.
 	cacheDir := filepath.Join(gitRoot, ".rekal", "nomic")
 	embedder, err := NewEmbedder(cacheDir)
 	if err != nil {
 		return nil, err
 	}
+	spawnDaemon(gitRoot)
 	return &Client{embedder: embedder}, nil
 }
 
