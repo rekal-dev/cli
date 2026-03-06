@@ -314,12 +314,24 @@ func ensureDaemon(gitRoot string) (*daemonClient, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("nomic: start daemon: %w", err)
 	}
-	// Detach — don't wait.
-	go cmd.Wait() //nolint:errcheck
+
+	// Wait in background so we can detect early exit.
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
 
 	// Poll for socket readiness.
 	deadline := time.Now().Add(startPoll)
 	for time.Now().Before(deadline) {
+		// Check if daemon already exited (failed to start).
+		select {
+		case err := <-waitCh:
+			if err != nil {
+				return nil, fmt.Errorf("nomic: daemon exited: %w", err)
+			}
+			return nil, fmt.Errorf("nomic: daemon exited unexpectedly")
+		default:
+		}
+
 		time.Sleep(100 * time.Millisecond)
 		conn, err := net.DialTimeout("unix", sock, dialTimeout)
 		if err != nil {
@@ -332,6 +344,9 @@ func ensureDaemon(gitRoot string) (*daemonClient, error) {
 		dc.Close()
 	}
 
+	// Timed out — kill the daemon process to avoid leaked goroutines.
+	cmd.Process.Kill() //nolint:errcheck
+	<-waitCh
 	return nil, fmt.Errorf("nomic: daemon did not start within %v", startPoll)
 }
 
