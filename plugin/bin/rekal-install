@@ -3,6 +3,7 @@ set -euo pipefail
 
 GITHUB_REPO="rekal-dev/rekal-cli"
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
+INSTALL_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/scripts/install.sh"
 
 # Colors (disabled in non-interactive mode)
 if [[ -t 1 ]]; then
@@ -65,6 +66,65 @@ detect_arch() {
     esac
 }
 
+# `github.com/<repo>/releases/latest` redirects to the tag, so following the
+# redirect names the newest release without asking the API. That matters
+# because it is the *same host* the download below already uses: any network
+# that can install can also resolve. Unauthenticated api.github.com allows 60
+# requests an hour per IP, so a shared office egress or a CI runner can be out
+# of budget before the user types anything, and some networks reach
+# github.com and raw.githubusercontent.com while api.github.com is not
+# allowlisted at all. Both used to land as a bare "could not fetch".
+resolve_from_redirect() {
+    local effective
+    effective=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+        "https://github.com/${GITHUB_REPO}/releases/latest" 2>/dev/null) || return 1
+    [[ "$effective" == */releases/tag/* ]] || return 1
+    printf '%s\n' "${effective##*/releases/tag/}"
+}
+
+# Fallback for the reverse case: a private repo, or a proxy that mangles the
+# HEAD redirect. Honors GITHUB_TOKEN, which is also the way past a rate limit.
+resolve_from_api() {
+    local url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+    local curl_opts=(-fsSL)
+    [[ -n "${GITHUB_TOKEN:-}" ]] && curl_opts+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    local body
+    body=$(curl "${curl_opts[@]}" "$url" 2>/dev/null) || return 1
+    printf '%s\n' "$body" | grep '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/'
+}
+
+# Runs inside a command substitution, so stdout is captured — every byte the
+# user needs to read has to go to stderr.
+report_unresolved_version() {
+    local gh api
+    gh=$(curl -sSL -o /dev/null -w '%{http_code}' \
+        "https://github.com/${GITHUB_REPO}/releases/latest" 2>/dev/null || echo "no response")
+    api=$(curl -sSL -o /dev/null -w '%{http_code}' \
+        "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null || echo "no response")
+
+    printf '  %b%s%b %b\n' "${RED}" "✗" "${NC}" \
+        "Could not resolve the latest version (github.com: ${gh}, api.github.com: ${api})." >&2
+    printf '\n' >&2
+    # Only blame the rate limit when the API actually reported one. An offline
+    # machine and a spent quota need different things from the user.
+    case "$api" in
+        403|429)
+            printf '  %bGitHub allows 60 unauthenticated API calls an hour per IP, and a%b\n' "${DIM}" "${NC}" >&2
+            printf '  %bshared network can spend that before you start.%b\n' "${DIM}" "${NC}" >&2
+            ;;
+        *)
+            printf '  %bGitHub could not be reached to look up the newest release.%b\n' "${DIM}" "${NC}" >&2
+            ;;
+    esac
+    printf '  %bName a version to skip the lookup:%b\n' "${DIM}" "${NC}" >&2
+    printf '\n' >&2
+    printf '    %bcurl -fsSL %s | REKAL_VERSION=<tag> bash%b\n' "${BOLD}" "${INSTALL_URL}" "${NC}" >&2
+    printf '\n' >&2
+    printf '  %bTags: https://github.com/%s/releases%b\n' "${DIM}" "${GITHUB_REPO}" "${NC}" >&2
+    printf '\n' >&2
+    exit 1
+}
+
 get_version() {
     if [[ -n "${REKAL_VERSION:-}" ]]; then
         echo "${REKAL_VERSION#v}"
@@ -74,12 +134,10 @@ get_version() {
         echo "${1#v}"
         return
     fi
-    local url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-    local curl_opts=(-fsSL)
-    [[ -n "${GITHUB_TOKEN:-}" ]] && curl_opts+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
     local version
-    version=$(curl "${curl_opts[@]}" "$url" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"tag_name": *"v?([^"]+)".*/\1/')
-    [[ -z "$version" ]] && error "Could not fetch latest version from GitHub."
+    version=$(resolve_from_redirect || resolve_from_api || true)
+    version="${version#v}"
+    [[ -n "$version" ]] || report_unresolved_version
     echo "$version"
 }
 
