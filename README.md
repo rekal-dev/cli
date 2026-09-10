@@ -72,7 +72,7 @@ to step 3 below.
 ### From a shell
 
 ```bash
-# 1. Install (default: ~/.local/bin — override with --target <dir>)
+# 1. Install (into ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash
 
 # 2. Turn it on in your repo
@@ -103,7 +103,23 @@ bash rekal-install.sh
 `rekal_linux_arm64.tar.gz`. Each release ships `checksums.txt`; verify with
 `shasum -a 256 -c checksums.txt`, then extract `rekal` onto your `PATH`.
 
-**Pin a version** with `REKAL_VERSION=v1.0.2` in front of either command.
+**Install somewhere else** with `--target <dir>`. Piping into a shell needs
+`-s --` before it, because the flags are for the script, not for bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash -s -- --target /usr/local/bin
+```
+
+**Pin a version** with `REKAL_VERSION=v1.0.2`. It goes in front of the command
+that runs the script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | REKAL_VERSION=v1.0.2 bash
+REKAL_VERSION=v1.0.2 bash rekal-install.sh
+```
+
+In front of `curl` it sets the variable for the download and never reaches the
+script, which then installs the latest version instead.
 
 **Build from source** if you want to change it. `go install` alone will not
 work, because the deep-embedding layer is CGO bound to a pinned llama.cpp
