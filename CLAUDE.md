@@ -991,5 +991,9 @@ No exclamation marks. No emoji. No "oops."
    git push origin v0.x.y
    ```
 3. Release workflow validates then publishes via GoReleaser
+4. Bump the `REKAL_VERSION=v…` pin in README.md's install commands to the new
+   tag (`mise run check:readme-pin` verifies it). The README names a version so
+   installing never depends on GitHub's 60-an-hour unauthenticated API budget —
+   a pin nobody bumps silently hands every new user the old binary
 
 Rekal memory is active here — before non-trivial work, use the `rekal` skill and route: grep the tree for present-tense code, `rekal` knowledge for present prose at HEAD, the ledger (`rekal` + gates) for past intent, the map for structure. <!-- managed by rekal -->

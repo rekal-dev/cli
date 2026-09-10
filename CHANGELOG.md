@@ -10,6 +10,24 @@ starts at 1.0; it records what 1.0 ships and everything after.
 
 ## [Unreleased]
 
+### Fixed
+
+- The installer resolves the release version off the `releases/latest`
+  redirect instead of the GitHub API. Unauthenticated API calls are capped at
+  60 an hour per IP, so a shared office egress could exhaust the budget before
+  a user typed anything, and some networks reach `github.com` and
+  `raw.githubusercontent.com` but never allowlist `api.github.com` — both
+  ended the install at "Could not fetch latest version from GitHub". The
+  redirect uses the same host the download already needs. When resolution does
+  fail it now reports the HTTP code each host returned and names
+  `REKAL_VERSION`, which skips the lookup.
+- README install commands work as written. `--target` is shown with the
+  `bash -s --` a piped shell requires, and `REKAL_VERSION` in front of the
+  shell that runs the script rather than in front of `curl`, where it applied
+  to the download and never reached the script — silently installing the
+  latest version instead of the pinned one. The commands now name a version so
+  a first install does not depend on the lookup at all.
+
 ## [1.0.2] - 2026-08-04
 
 ### Fixed

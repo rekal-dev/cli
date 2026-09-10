@@ -73,7 +73,7 @@ to step 3 below.
 
 ```bash
 # 1. Install (into ~/.local/bin)
-curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | REKAL_VERSION=v1.0.2 bash
 
 # 2. Turn it on in your repo
 cd your-project
@@ -94,7 +94,7 @@ rekal "why did we drop batching?"
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh -o rekal-install.sh
 less rekal-install.sh
-bash rekal-install.sh
+REKAL_VERSION=v1.0.2 bash rekal-install.sh
 ```
 
 **Download the binary yourself** from
@@ -107,19 +107,25 @@ bash rekal-install.sh
 `-s --` before it, because the flags are for the script, not for bash:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash -s -- --target /usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | REKAL_VERSION=v1.0.2 bash -s -- --target /usr/local/bin
 ```
 
-**Pin a version** with `REKAL_VERSION=v1.0.2`. It goes in front of the command
-that runs the script:
+**Choose a different version** by changing `REKAL_VERSION`, or drop it to take
+whatever is newest:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | REKAL_VERSION=v1.0.2 bash
-REKAL_VERSION=v1.0.2 bash rekal-install.sh
+curl -fsSL https://raw.githubusercontent.com/rekal-dev/rekal-cli/main/scripts/install.sh | bash
 ```
 
-In front of `curl` it sets the variable for the download and never reaches the
-script, which then installs the latest version instead.
+Without it the installer looks the newest release up over the network. The
+commands above name a version because that lookup is the one step that can fail
+on a network you do not control — a shared office IP can exhaust GitHub's 60
+unauthenticated API calls an hour, and some proxies allow `github.com` but not
+`api.github.com`. A named version skips the lookup entirely.
+
+`REKAL_VERSION` has to go in front of the command that runs the *script*. In
+front of `curl` it applies to the download and never reaches the script, which
+then resolves the newest version anyway.
 
 **Build from source** if you want to change it. `go install` alone will not
 work, because the deep-embedding layer is CGO bound to a pinned llama.cpp

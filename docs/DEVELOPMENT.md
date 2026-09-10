@@ -233,6 +233,11 @@ All workflows use `ubuntu-latest`. CI and Lint use [jdx/mise-action@v3](https://
    git push origin v0.x.y
    ```
 3. The Release workflow runs: validate (test:ci + lint), then release (GoReleaser).
+4. Bump `REKAL_VERSION=v…` in README.md's install commands to the new tag. The
+   README pins a version so the install does not depend on GitHub's
+   unauthenticated API budget; a pin nobody bumps quietly ships the old binary
+   to every new user. `mise run check:readme-pin` fails when it is behind the
+   newest release.
 
 ---
 

@@ -57,3 +57,26 @@ go build -ldflags "-X github.com/rekal-dev/rekal-cli/cmd/rekal/cli.Version=${VER
 [tasks."build:all"]
 description = "Build for all platforms (snapshot)"
 run = "goreleaser build --snapshot --clean"
+
+[tasks."check:readme-pin"]
+description = "Check that README's REKAL_VERSION install pin matches the newest release"
+run = """
+set -euo pipefail
+pinned=$(grep -oE 'REKAL_VERSION=v[0-9]+\\.[0-9]+\\.[0-9]+' README.md | sort -u)
+count=$(printf '%s\\n' "$pinned" | grep -c . || true)
+if [ "$count" -ne 1 ]; then
+  echo "README pins disagree with each other:"
+  printf '%s\\n' "$pinned"
+  exit 1
+fi
+pinned=${pinned#REKAL_VERSION=}
+# Same redirect the installer uses, so this check needs no API budget either.
+latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \\
+  https://github.com/rekal-dev/rekal-cli/releases/latest)
+latest=${latest##*/releases/tag/}
+if [ "$pinned" != "$latest" ]; then
+  echo "README pins $pinned, newest release is $latest. Update README.md."
+  exit 1
+fi
+echo "README pin $pinned matches the newest release"
+"""
